@@ -736,25 +736,40 @@ private fun GuideTimelineCanvas(
                     }
                 }
 
-                val hasReminder = program.id in scheduledReminderIds
-                val hasAutoTune = program.id in scheduledAutoTuneIds
-                if (hasReminder || hasAutoTune) {
-                    val dotRadius = 3.5.dp.toPx()
-                    val haloRadius = dotRadius + 1.5.dp.toPx()
-                    val dotGap = 3.dp.toPx()
-                    val dotY = rect.top + 7.dp.toPx()
-                    val rightDotX = rect.right - 8.dp.toPx()
-                    val reminderX = if (hasReminder && hasAutoTune) rightDotX - dotRadius * 2 - dotGap else rightDotX
-                    if (hasReminder) {
-                        canvas.drawCircle(reminderX, dotY, haloRadius, actionHaloPaint)
-                        canvas.drawCircle(reminderX, dotY, dotRadius, reminderPaint)
-                    }
-                    if (hasAutoTune) {
-                        canvas.drawCircle(rightDotX, dotY, haloRadius, actionHaloPaint)
-                        canvas.drawCircle(rightDotX, dotY, dotRadius, autoTunePaint)
-                    }
-                }
             }
+
+        // Draw programme actions in a dedicated top layer. Short programme cards
+        // may overlap because of their minimum width, but must never hide a marker.
+        drawingPrograms.forEach { program ->
+            val hasReminder = program.id in scheduledReminderIds
+            val hasAutoTune = program.id in scheduledAutoTuneIds
+            if (!hasReminder && !hasAutoTune) return@forEach
+
+            val clippedStart = if (program.startsAt.isBefore(windowStart)) windowStart else program.startsAt
+            val clippedEnd = if (program.endsAt.isAfter(windowEnd)) windowEnd else program.endsAt
+            val startFraction = (Duration.between(windowStart, clippedStart).toMillis() / totalMillis).coerceIn(0f, 1f)
+            val endFraction = (Duration.between(windowStart, clippedEnd).toMillis() / totalMillis).coerceIn(0f, 1f)
+            val left = size.width * startFraction
+            val right = (size.width * endFraction - gap)
+                .coerceAtLeast(left + minimumWidth)
+                .coerceAtMost(size.width)
+            if (right <= left) return@forEach
+
+            val dotRadius = 3.5.dp.toPx()
+            val haloRadius = dotRadius + 1.5.dp.toPx()
+            val dotGap = 3.dp.toPx()
+            val dotY = verticalPadding + 7.dp.toPx()
+            val rightDotX = right - 8.dp.toPx()
+            val reminderX = if (hasReminder && hasAutoTune) rightDotX - dotRadius * 2 - dotGap else rightDotX
+            if (hasReminder) {
+                canvas.drawCircle(reminderX, dotY, haloRadius, actionHaloPaint)
+                canvas.drawCircle(reminderX, dotY, dotRadius, reminderPaint)
+            }
+            if (hasAutoTune) {
+                canvas.drawCircle(rightDotX, dotY, haloRadius, actionHaloPaint)
+                canvas.drawCircle(rightDotX, dotY, dotRadius, autoTunePaint)
+            }
+        }
     }
 }
 
