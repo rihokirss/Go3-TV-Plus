@@ -6,6 +6,8 @@ Privaatne Android TV 9+ klient, mille põhivaade on alati mängiv telekanal. Rak
 
 Rakendus kasutab kasutaja enda HAR-i ja Android TV kliendi põhjal kinnitatud Go3 seadmesidumist, kanaliloendit, EPG kataloogi, playback-session'it ning ametlikku Widevine'i litsentsivoogu. QR-sidumine, profiili meeldejätmine, live-video ja seitsme päeva EPG on kontrollitud füüsilistel Android TV seadmetel.
 
+Kui kanal pakub 50 fps varianti, hoiab mängija selle raja valituna, et kiire liikumise ajal ei tekiks 50 ja 25 fps vahel pendeldamist. Kanalid, millel 50 fps rada pole, mängivad tavapäraselt 25 fps. Go3 praeguses spordikanalite kvaliteediredelis tähendab 50 fps 1080p/8 Mbps voogu.
+
 Go3 API ei ole avalik ja võib muutuda. Teenusespetsiifiline leping on koondatud `Go3HttpGateway` adapterisse; DRM-i, sertifikaadikaitset ega APK kontrolli ei murta.
 
 ## Puldinupud

@@ -12,6 +12,8 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLivePlaybackSpeedControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.session.MediaSession
 import ee.local.go3tvplus.domain.DrmScheme
 import ee.local.go3tvplus.domain.PlaybackTicket
@@ -27,6 +29,29 @@ data class SeekSnapshot(
 
 class TvPlayer(context: Context) {
     private val appContext = context.applicationContext
+    private val trackSelector = DefaultTrackSelector(
+        appContext,
+        AdaptiveTrackSelection.Factory(
+            /* minDurationForQualityIncreaseMs = */ 6_000,
+            // Go3's ladder jumps from 1080p50 straight to 720p25. The Media3 default
+            // (25 s) is usually above the available live-edge buffer, so even a short
+            // bandwidth estimate dip changes frame cadence. Keep 50 fps while there is
+            // a safe buffer, but still allow a downgrade before an actual rebuffer.
+            /* maxDurationForQualityDecreaseMs = */ 8_000,
+            /* minDurationToRetainAfterDiscardMs = */ 12_000,
+            /* bandwidthFraction = */ 0.82f,
+        ),
+    ).apply {
+        setParameters(
+            buildUponParameters()
+                // Go3's sports ladder has 50 fps only at 1080p/8 Mbps. Mixing it with
+                // the 25 fps fallback causes severe cadence changes on some TV codecs.
+                // If a channel has no >=48 fps representation, the explicit exceed
+                // fallback keeps its normal 25 fps tracks playable.
+                .setMinVideoFrameRate(MIN_SMOOTH_VIDEO_FRAME_RATE)
+                .setExceedVideoConstraintsIfNecessary(true),
+        )
+    }
     private val liveSpeedControl = DefaultLivePlaybackSpeedControl.Builder()
         // Wide speed changes are visible as judder on 25/50 fps TV channels.
         .setFallbackMinPlaybackSpeed(0.995f)
@@ -35,6 +60,7 @@ class TvPlayer(context: Context) {
         .setMinUpdateIntervalMs(2_000)
         .build()
     val player: ExoPlayer = ExoPlayer.Builder(appContext)
+        .setTrackSelector(trackSelector)
         .setLivePlaybackSpeedControl(liveSpeedControl)
         .setSeekBackIncrementMs(30_000)
         .setSeekForwardIncrementMs(30_000)
@@ -243,6 +269,8 @@ private fun languagePreferenceLabel(language: String): String {
 }
 
 private fun validTime(value: Long): Long? = value.takeIf { it != C.TIME_UNSET && it >= 0L }
+
+private const val MIN_SMOOTH_VIDEO_FRAME_RATE = 48
 
 private fun nowPlayingMetadata(channelName: String, programTitle: String?): MediaMetadata =
     MediaMetadata.Builder()
