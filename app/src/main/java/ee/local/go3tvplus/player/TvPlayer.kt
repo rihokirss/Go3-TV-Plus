@@ -1,0 +1,259 @@
+@file:androidx.media3.common.util.UnstableApi
+
+package ee.local.go3tvplus.player
+
+import android.content.Context
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultLivePlaybackSpeedControl
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.session.MediaSession
+import ee.local.go3tvplus.domain.DrmScheme
+import ee.local.go3tvplus.domain.PlaybackTicket
+import java.util.Locale
+
+data class SeekSnapshot(
+    val positionMs: Long,
+    val durationMs: Long,
+    val liveOffsetMs: Long?,
+    val isLive: Boolean,
+    val isPlaying: Boolean,
+)
+
+class TvPlayer(context: Context) {
+    private val appContext = context.applicationContext
+    private val liveSpeedControl = DefaultLivePlaybackSpeedControl.Builder()
+        // Wide speed changes are visible as judder on 25/50 fps TV channels.
+        .setFallbackMinPlaybackSpeed(0.995f)
+        .setFallbackMaxPlaybackSpeed(1.005f)
+        .setMaxLiveOffsetErrorMsForUnitSpeed(2_000)
+        .setMinUpdateIntervalMs(2_000)
+        .build()
+    val player: ExoPlayer = ExoPlayer.Builder(appContext)
+        .setLivePlaybackSpeedControl(liveSpeedControl)
+        .setSeekBackIncrementMs(30_000)
+        .setSeekForwardIncrementMs(30_000)
+        .build().apply {
+        playWhenReady = true
+        trackSelectionParameters = trackSelectionParameters.buildUpon()
+            .setPreferredAudioLanguage("et")
+            .setPreferredTextLanguage("et")
+            .build()
+    }
+    private val mediaSession = MediaSession.Builder(appContext, player)
+        .setId("${appContext.packageName}.main")
+        .build()
+    private var listener: Listener? = null
+    private var baselineLiveOffsetMs: Long? = null
+    private var preferredAudioLanguage = "et"
+    private var preferredSubtitleLanguage: String? = null
+    private var currentChannelName = "Go3 TV+"
+    private var currentProgramTitle: String? = null
+
+    init {
+        player.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) {
+                    if (baselineLiveOffsetMs == null) {
+                        baselineLiveOffsetMs = validTime(player.currentLiveOffset)
+                    }
+                    listener?.onReady()
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                listener?.onError(error)
+            }
+
+            override fun onRenderedFirstFrame() {
+                listener?.onFirstFrame()
+            }
+        })
+    }
+
+    fun setListener(listener: Listener) {
+        this.listener = listener
+    }
+
+    fun play(
+        ticket: PlaybackTicket,
+        channelName: String = currentChannelName,
+        programTitle: String? = currentProgramTitle,
+    ) {
+        baselineLiveOffsetMs = null
+        currentChannelName = channelName
+        currentProgramTitle = programTitle
+        val httpFactory = DefaultHttpDataSource.Factory()
+            .setUserAgent("Go3 TV+/${ee.local.go3tvplus.BuildConfig.VERSION_NAME}")
+            .setDefaultRequestProperties(ticket.requestHeaders)
+        val mediaItemBuilder = MediaItem.Builder()
+            .setUri(ticket.manifestUrl)
+            .setMediaId(ticket.contentId)
+            .setMimeType(ticket.mimeType)
+            .setMediaMetadata(nowPlayingMetadata(channelName, programTitle))
+            .setLiveConfiguration(
+                MediaItem.LiveConfiguration.Builder()
+                    .setMinPlaybackSpeed(0.995f)
+                    .setMaxPlaybackSpeed(1.005f)
+                    .build(),
+            )
+
+        if (ticket.drmScheme != null && ticket.licenseUrl != null) {
+            mediaItemBuilder.setDrmConfiguration(
+                MediaItem.DrmConfiguration.Builder(ticket.drmScheme.uuid)
+                    .setLicenseUri(ticket.licenseUrl)
+                    .setLicenseRequestHeaders(ticket.licenseRequestHeaders)
+                    .build(),
+            )
+        }
+        val mediaSource = DefaultMediaSourceFactory(httpFactory)
+            .createMediaSource(mediaItemBuilder.build())
+        player.setMediaSource(mediaSource)
+        player.prepare()
+        player.playWhenReady = true
+    }
+
+    /** Refreshes what Android TV exposes to phones and other system media controls. */
+    fun updateNowPlaying(channelName: String, programTitle: String?) {
+        if (channelName == currentChannelName && programTitle == currentProgramTitle) return
+        currentChannelName = channelName
+        currentProgramTitle = programTitle
+        val index = player.currentMediaItemIndex
+        val item = player.currentMediaItem ?: return
+        if (index < 0) return
+        player.replaceMediaItem(
+            index,
+            item.buildUpon().setMediaMetadata(nowPlayingMetadata(channelName, programTitle)).build(),
+        )
+    }
+
+    fun togglePlayPause() {
+        if (player.playWhenReady) player.pause() else player.play()
+    }
+
+    fun applyTrackPreferences(audioLanguage: String, subtitleLanguage: String?) {
+        preferredAudioLanguage = audioLanguage
+        preferredSubtitleLanguage = subtitleLanguage
+        val builder = player.trackSelectionParameters.buildUpon()
+            .setPreferredTextLanguage(subtitleLanguage)
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, subtitleLanguage == null)
+        if (audioLanguage == "auto") builder.setPreferredAudioLanguages()
+        else builder.setPreferredAudioLanguage(audioLanguage)
+        player.trackSelectionParameters = builder.build()
+    }
+
+    fun audioTrackLabel(): String = languagePreferenceLabel(preferredAudioLanguage)
+
+    fun setAudioLanguagePreference(language: String) {
+        preferredAudioLanguage = language
+        val builder = player.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+        if (language == "auto") builder.setPreferredAudioLanguages()
+        else builder.setPreferredAudioLanguage(language)
+        player.trackSelectionParameters = builder.build()
+    }
+
+    fun setSubtitleLanguagePreference(language: String?) {
+        preferredSubtitleLanguage = language
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setPreferredTextLanguage(language)
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, language == null)
+            .build()
+    }
+
+    fun subtitleTrackLabel(): String = preferredSubtitleLanguage?.let(::languagePreferenceLabel) ?: "Väljas"
+
+    fun seekSnapshot(): SeekSnapshot {
+        val duration = validTime(player.duration) ?: 0L
+        val rawPosition = player.currentPosition.coerceAtLeast(0L)
+        val rawLiveOffset = validTime(player.currentLiveOffset)
+        val relativeLiveOffset = if (rawLiveOffset != null && baselineLiveOffsetMs != null) {
+            (rawLiveOffset - baselineLiveOffsetMs!!).coerceAtLeast(0L)
+        } else rawLiveOffset
+        return SeekSnapshot(
+            positionMs = if (duration > 0) rawPosition.coerceAtMost(duration) else rawPosition,
+            durationMs = duration,
+            // The service's normal DASH delay is the user's live edge, not "behind live".
+            liveOffsetMs = relativeLiveOffset,
+            isLive = player.isCurrentMediaItemLive,
+            isPlaying = player.playWhenReady,
+        )
+    }
+
+    fun seekBy(deltaMs: Long): SeekSnapshot {
+        val before = seekSnapshot()
+        if (before.durationMs <= 0L) return before
+        val target = (before.positionMs + deltaMs).coerceIn(0L, before.durationMs)
+        val reachesLiveEdge = before.isLive && deltaMs > 0L &&
+            before.liveOffsetMs?.let { deltaMs >= it - 5_000L } == true
+        if (reachesLiveEdge || (before.isLive && target >= before.durationMs - 15_000L)) {
+            player.seekToDefaultPosition()
+            val livePosition = (before.durationMs - (baselineLiveOffsetMs ?: 0L))
+                .coerceIn(0L, before.durationMs)
+            return before.copy(positionMs = livePosition, liveOffsetMs = 0L)
+        } else {
+            player.seekTo(target)
+        }
+        return seekSnapshot().copy(positionMs = target)
+    }
+
+    /** Re-anchor only after material live drift; manual time-shift disables this in the view model. */
+    fun correctLiveDriftIfNeeded(): Boolean {
+        if (!player.isCurrentMediaItemLive || !player.isPlaying) return false
+        val currentOffset = validTime(player.currentLiveOffset) ?: return false
+        val baseline = baselineLiveOffsetMs ?: currentOffset.also { baselineLiveOffsetMs = it }
+        if (currentOffset <= baseline + 20_000L) return false
+        player.seekToDefaultPosition()
+        return true
+    }
+
+    fun pause() {
+        player.pause()
+    }
+
+    /** Drop the decoder and its last frame so standby cannot restore stale video state. */
+    fun stopAndClear() {
+        baselineLiveOffsetMs = null
+        player.playWhenReady = false
+        player.stop()
+        player.clearMediaItems()
+    }
+
+    fun release() {
+        mediaSession.release()
+        player.release()
+    }
+
+    interface Listener {
+        fun onReady()
+        fun onFirstFrame()
+        fun onError(error: PlaybackException)
+    }
+}
+
+private fun languagePreferenceLabel(language: String): String {
+    if (language == "auto") return "Automaatne"
+    val name = Locale.forLanguageTag(language).getDisplayLanguage(Locale.forLanguageTag("et-EE"))
+    return name.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.forLanguageTag("et-EE")) else it.toString() }
+}
+
+private fun validTime(value: Long): Long? = value.takeIf { it != C.TIME_UNSET && it >= 0L }
+
+private fun nowPlayingMetadata(channelName: String, programTitle: String?): MediaMetadata =
+    MediaMetadata.Builder()
+        .setTitle(programTitle ?: channelName)
+        .setArtist(if (programTitle == null) "Go3 TV+" else channelName)
+        .setSubtitle(channelName)
+        .build()
+
+private val DrmScheme.uuid
+    get() = when (this) {
+        DrmScheme.WIDEVINE -> C.WIDEVINE_UUID
+        DrmScheme.PLAYREADY -> C.PLAYREADY_UUID
+        DrmScheme.CLEARKEY -> C.CLEARKEY_UUID
+    }
