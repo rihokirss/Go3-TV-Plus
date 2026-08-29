@@ -43,9 +43,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -467,7 +470,7 @@ private fun GuideOverlay(state: TvUiState) {
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Text("←→ aeg  •  ↑↓ kanal  •  OK vaata  •  hoia OK lemmikud  •  KOLLANE abi", color = Color(0xFF9BB0C7), fontSize = 12.sp)
+                    Text(guideControlsHint(), color = Color(0xFF9BB0C7), fontSize = 12.sp)
                 }
             }
 
@@ -536,7 +539,10 @@ private fun GuideOverlay(state: TvUiState) {
                     }
                     if (selectedProgram.id in state.scheduledReminderIds) {
                         Text(
-                            "ROHELINE  MEELDETULETUS",
+                            buildAnnotatedString {
+                                withStyle(SpanStyle(color = Color(0xFF59E391))) { append("●") }
+                                append("  MEELDETULETUS")
+                            },
                             modifier = Modifier.padding(start = 9.dp).background(Color(0xFF145A3B), RoundedCornerShape(12.dp)).padding(horizontal = 9.dp, vertical = 4.dp),
                             color = Color(0xFFC9FFE0),
                             fontSize = 10.sp,
@@ -545,7 +551,10 @@ private fun GuideOverlay(state: TvUiState) {
                     }
                     if (selectedProgram.id in state.scheduledAutoTuneIds) {
                         Text(
-                            "SININE  AUTOLÜLITUS",
+                            buildAnnotatedString {
+                                withStyle(SpanStyle(color = Color(0xFF55B4FF))) { append("●") }
+                                append("  AUTOLÜLITUS")
+                            },
                             modifier = Modifier.padding(start = 7.dp).background(Color(0xFF174E82), RoundedCornerShape(12.dp)).padding(horizontal = 9.dp, vertical = 4.dp),
                             color = Color(0xFFD5EAFF),
                             fontSize = 10.sp,
@@ -569,6 +578,12 @@ private fun GuideOverlay(state: TvUiState) {
             }
         }
     }
+}
+
+private fun guideControlsHint() = buildAnnotatedString {
+    append("←→ aeg  •  ↑↓ kanal  •  OK vaata  •  hoia OK lemmikud  •  ")
+    withStyle(SpanStyle(color = Color(0xFFFFD84D))) { append("●") }
+    append(" abi")
 }
 
 @Composable

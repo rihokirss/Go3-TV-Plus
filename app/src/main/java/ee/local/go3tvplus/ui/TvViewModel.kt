@@ -474,7 +474,7 @@ class TvViewModel(
 
     private fun handleGuideColorKey(keyCode: Int) {
         if (keyCode == KeyEvent.KEYCODE_PROG_YELLOW) {
-            showNotice("ROHELINE meeldetuletus  •  SININE automaatlülitus  •  PUNANE eemalda")
+            showNotice("🟢 meeldetuletus  •  🔵 automaatlülitus  •  🔴 eemalda")
             return
         }
         val snapshot = mutableState.value
