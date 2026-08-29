@@ -24,12 +24,21 @@ data class PlaybackPreferences(
     val subtitleLanguage: String?,
 )
 
+data class ScheduledProgramAction(
+    val programId: String,
+    val channelId: String,
+    val startsAtEpochMs: Long,
+    val reminder: Boolean,
+    val autoTune: Boolean,
+)
+
 class TvPreferences(private val context: Context) {
     private object Keys {
         val lastChannel = stringPreferencesKey("last_channel")
         val selectedProfile = stringPreferencesKey("selected_profile")
         val preferredAudio = stringPreferencesKey("preferred_audio")
         val preferredSubtitle = stringPreferencesKey("preferred_subtitle")
+        val scheduledProgramActions = stringSetPreferencesKey("scheduled_program_actions")
     }
 
     val lastChannel: Flow<String?> = context.tvDataStore.data.map { it[Keys.lastChannel] }
@@ -45,6 +54,14 @@ class TvPreferences(private val context: Context) {
     suspend fun savePreferredAudio(language: String) = context.tvDataStore.edit { it[Keys.preferredAudio] = language }
     suspend fun savePreferredSubtitle(language: String?) = context.tvDataStore.edit {
         if (language == null) it.remove(Keys.preferredSubtitle) else it[Keys.preferredSubtitle] = language
+    }
+
+    suspend fun scheduledProgramActionsNow(): List<ScheduledProgramAction> =
+        context.tvDataStore.data.first()[Keys.scheduledProgramActions].orEmpty()
+            .mapNotNull(::decodeScheduledProgramAction)
+
+    suspend fun saveScheduledProgramActions(actions: Collection<ScheduledProgramAction>) = context.tvDataStore.edit {
+        it[Keys.scheduledProgramActions] = actions.mapTo(mutableSetOf(), ::encodeScheduledProgramAction)
     }
 
     suspend fun hiddenChannelsNow(profileId: String): Set<String> {
@@ -100,6 +117,26 @@ class TvPreferences(private val context: Context) {
             }
         }
     }
+}
+
+internal fun encodeScheduledProgramAction(action: ScheduledProgramAction): String = listOf(
+    action.programId,
+    action.channelId,
+    action.startsAtEpochMs,
+    if (action.reminder) 1 else 0,
+    if (action.autoTune) 1 else 0,
+).joinToString("|")
+
+internal fun decodeScheduledProgramAction(value: String): ScheduledProgramAction? {
+    val parts = value.split('|')
+    if (parts.size != 5 || parts[0].isBlank() || parts[1].isBlank()) return null
+    return ScheduledProgramAction(
+        programId = parts[0],
+        channelId = parts[1],
+        startsAtEpochMs = parts[2].toLongOrNull() ?: return null,
+        reminder = parts[3] == "1",
+        autoTune = parts[4] == "1",
+    ).takeIf { it.reminder || it.autoTune }
 }
 
 private const val HIDDEN_CHANNEL_TTL_MS = 6 * 60 * 60 * 1_000L

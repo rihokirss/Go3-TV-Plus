@@ -13,6 +13,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,7 +31,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,6 +61,7 @@ import ee.local.go3tvplus.domain.Profile
 import ee.local.go3tvplus.domain.Program
 import ee.local.go3tvplus.domain.ProgramWindow
 import ee.local.go3tvplus.R
+import kotlinx.coroutines.delay
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
@@ -233,6 +238,19 @@ private fun PlayerScreen(state: TvUiState, player: Player, onRetry: () -> Unit, 
             )
         }
 
+        state.notice?.let { notice ->
+            Text(
+                notice,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 38.dp)
+                    .background(Color(0xF0193655), RoundedCornerShape(18.dp))
+                    .border(1.dp, Cyan.copy(alpha = 0.7f), RoundedCornerShape(18.dp))
+                    .padding(horizontal = 22.dp, vertical = 10.dp),
+                color = Color.White,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+
         state.error?.let { message ->
             ErrorBanner(message, state.errorActionIndex, onRetry, onDismissError)
         }
@@ -399,7 +417,13 @@ private fun ChannelRail(state: TvUiState) {
 
 @Composable
 private fun GuideOverlay(state: TvUiState) {
-    val now = Instant.now()
+    var now by remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = Instant.now()
+            delay(30_000L)
+        }
+    }
     val guideChannels = if (state.favoritesOnly) {
         state.channels.filter { it.id in state.favoriteChannelIds }
     } else state.channels
@@ -443,15 +467,36 @@ private fun GuideOverlay(state: TvUiState) {
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Text("←→ aeg   •   ↑↓ kanal   •   OK vaata   •   hoia OK: kõik/lemmikud", color = Color(0xFF9BB0C7), fontSize = 12.sp)
+                    Text("←→ aeg  •  ↑↓ kanal  •  OK vaata  •  hoia OK lemmikud  •  KOLLANE abi", color = Color(0xFF9BB0C7), fontSize = 12.sp)
                 }
             }
 
-            Row(Modifier.fillMaxWidth().height(22.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().height(26.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("KANAL", color = Color(0xFF718AA5), fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(206.dp))
-                Row(Modifier.weight(1f), horizontalArrangement = Arrangement.SpaceBetween) {
-                    repeat(5) { hour ->
-                        Text(formatTime(windowStart.plus(Duration.ofHours(hour.toLong()))), color = Color(0xFF8FA6BE), fontSize = 12.sp)
+                BoxWithConstraints(Modifier.weight(1f).fillMaxHeight()) {
+                    Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        repeat(5) { hour ->
+                            Text(formatTime(windowStart.plus(Duration.ofHours(hour.toLong()))), color = Color(0xFF8FA6BE), fontSize = 12.sp)
+                        }
+                    }
+                    if (!now.isBefore(windowStart) && now.isBefore(windowEnd)) {
+                        val totalMillis = Duration.between(windowStart, windowEnd).toMillis().coerceAtLeast(1).toFloat()
+                        val nowFraction = (Duration.between(windowStart, now).toMillis() / totalMillis).coerceIn(0f, 1f)
+                        val badgeWidth = 54.dp
+                        val badgeX = (maxWidth * nowFraction - badgeWidth / 2)
+                            .coerceIn(0.dp, (maxWidth - badgeWidth).coerceAtLeast(0.dp))
+                        Text(
+                            formatTime(now),
+                            modifier = Modifier
+                                .offset(x = badgeX)
+                                .align(Alignment.CenterStart)
+                                .background(Color(0xF019567C), RoundedCornerShape(9.dp))
+                                .border(1.dp, Cyan.copy(alpha = 0.75f), RoundedCornerShape(9.dp))
+                                .padding(horizontal = 7.dp, vertical = 2.dp),
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
                     }
                 }
             }
@@ -488,6 +533,24 @@ private fun GuideOverlay(state: TvUiState) {
                     Column(Modifier.weight(1f)) {
                         Text(selectedProgram.title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(selectedProgram.description.orEmpty(), color = Color(0xFFAAB9C9), fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                    if (selectedProgram.id in state.scheduledReminderIds) {
+                        Text(
+                            "ROHELINE  MEELDETULETUS",
+                            modifier = Modifier.padding(start = 9.dp).background(Color(0xFF145A3B), RoundedCornerShape(12.dp)).padding(horizontal = 9.dp, vertical = 4.dp),
+                            color = Color(0xFFC9FFE0),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    if (selectedProgram.id in state.scheduledAutoTuneIds) {
+                        Text(
+                            "SININE  AUTOLÜLITUS",
+                            modifier = Modifier.padding(start = 7.dp).background(Color(0xFF174E82), RoundedCornerShape(12.dp)).padding(horizontal = 9.dp, vertical = 4.dp),
+                            color = Color(0xFFD5EAFF),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
                     }
                     val status = when {
                         ProgramWindow.isCurrent(selectedProgram, now) -> "OTSE"
@@ -569,6 +632,13 @@ private fun GuideTimelineCanvas(
     val timePaint = remember { TextPaint(Paint.ANTI_ALIAS_FLAG).apply { typeface = android.graphics.Typeface.DEFAULT_BOLD } }
     val titlePaint = remember { TextPaint(Paint.ANTI_ALIAS_FLAG) }
     val linePaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
+    val progressTrackPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
+    val progressPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
+    val drawingPrograms = remember(programs, selectedProgramId, windowStart, windowEnd) {
+        programs
+            .filter { ProgramWindow.overlaps(it, windowStart, windowEnd) }
+            .sortedBy { if (it.id == selectedProgramId) 1 else 0 }
+    }
 
     Canvas(modifier) {
         val canvas = drawContext.canvas.nativeCanvas
@@ -582,11 +652,19 @@ private fun GuideTimelineCanvas(
         titlePaint.textSize = 13.sp.toPx()
         borderPaint.strokeWidth = 2.dp.toPx()
         borderPaint.color = Color(0xFFDDF4FF).toArgb()
-        linePaint.color = Cyan.toArgb()
+        linePaint.color = Cyan.copy(alpha = 0.32f).toArgb()
+        progressTrackPaint.color = Color(0xA0061728).toArgb()
+        progressPaint.color = Cyan.toArgb()
 
-        programs.asSequence()
-            .filter { ProgramWindow.overlaps(it, windowStart, windowEnd) }
-            .forEach { program ->
+        // Keep the current-time marker behind programme cards. It remains visible
+        // in the narrow gaps without ever crossing programme titles.
+        if (!now.isBefore(windowStart) && now.isBefore(windowEnd)) {
+            val nowFraction = (Duration.between(windowStart, now).toMillis() / totalMillis).coerceIn(0f, 1f)
+            val lineX = size.width * nowFraction
+            canvas.drawRect(lineX, 0f, lineX + 1.dp.toPx(), size.height, linePaint)
+        }
+
+        drawingPrograms.forEach { program ->
                 val clippedStart = if (program.startsAt.isBefore(windowStart)) windowStart else program.startsAt
                 val clippedEnd = if (program.endsAt.isAfter(windowEnd)) windowEnd else program.endsAt
                 val startFraction = (Duration.between(windowStart, clippedStart).toMillis() / totalMillis).coerceIn(0f, 1f)
@@ -612,13 +690,23 @@ private fun GuideTimelineCanvas(
                 canvas.drawText(formatTime(program.startsAt), left + horizontalPadding, timeBaseline, timePaint)
                 val title = TextUtils.ellipsize(program.title, titlePaint, availableTextWidth, TextUtils.TruncateAt.END).toString()
                 canvas.drawText(title, left + horizontalPadding, timeBaseline + titlePaint.textSize + 2.dp.toPx(), titlePaint)
-            }
 
-        if (!now.isBefore(windowStart) && now.isBefore(windowEnd)) {
-            val nowFraction = (Duration.between(windowStart, now).toMillis() / totalMillis).coerceIn(0f, 1f)
-            val lineX = size.width * nowFraction
-            canvas.drawRect(lineX, 0f, lineX + 2.dp.toPx(), size.height, linePaint)
-        }
+                if (ProgramWindow.isCurrent(program, now)) {
+                    val durationMillis = Duration.between(program.startsAt, program.endsAt).toMillis().coerceAtLeast(1).toFloat()
+                    val progress = (Duration.between(program.startsAt, now).toMillis() / durationMillis).coerceIn(0f, 1f)
+                    val barInset = 6.dp.toPx()
+                    val barHeight = 3.dp.toPx()
+                    val barLeft = left + barInset
+                    val barRight = (right - barInset).coerceAtLeast(barLeft)
+                    val barBottom = rect.bottom - 3.dp.toPx()
+                    val track = RectF(barLeft, barBottom - barHeight, barRight, barBottom)
+                    canvas.drawRoundRect(track, barHeight / 2, barHeight / 2, progressTrackPaint)
+                    if (progress > 0f) {
+                        val filled = RectF(barLeft, track.top, barLeft + (barRight - barLeft) * progress, barBottom)
+                        canvas.drawRoundRect(filled, barHeight / 2, barHeight / 2, progressPaint)
+                    }
+                }
+            }
     }
 }
 

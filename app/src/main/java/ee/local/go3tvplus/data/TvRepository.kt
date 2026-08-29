@@ -4,6 +4,7 @@ import androidx.room.withTransaction
 import ee.local.go3tvplus.data.local.AppDatabase
 import ee.local.go3tvplus.data.local.TvPreferences
 import ee.local.go3tvplus.data.local.ChannelPreference
+import ee.local.go3tvplus.data.local.ScheduledProgramAction
 import ee.local.go3tvplus.data.local.toDomain
 import ee.local.go3tvplus.data.local.toEntity
 import ee.local.go3tvplus.domain.Channel
@@ -110,6 +111,9 @@ class TvRepository(
     suspend fun playbackPreferences() = preferences.playbackPreferencesNow()
     suspend fun savePreferredAudio(language: String) = preferences.savePreferredAudio(language)
     suspend fun savePreferredSubtitle(language: String?) = preferences.savePreferredSubtitle(language)
+    suspend fun scheduledProgramActions() = preferences.scheduledProgramActionsNow()
+    suspend fun saveScheduledProgramActions(actions: Collection<ScheduledProgramAction>) =
+        preferences.saveScheduledProgramActions(actions)
     suspend fun hiddenChannelIds(profileId: String) = preferences.hiddenChannelsNow(profileId)
     suspend fun hideChannel(profileId: String, channelId: String) = preferences.hideChannel(profileId, channelId)
     suspend fun clearHiddenChannels(profileId: String) = preferences.clearHiddenChannels(profileId)

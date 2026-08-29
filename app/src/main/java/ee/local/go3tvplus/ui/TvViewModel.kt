@@ -9,6 +9,7 @@ import ee.local.go3tvplus.AppContainer
 import ee.local.go3tvplus.data.AuthCoordinator
 import ee.local.go3tvplus.data.TvRepository
 import ee.local.go3tvplus.data.local.ChannelPreference
+import ee.local.go3tvplus.data.local.ScheduledProgramAction
 import ee.local.go3tvplus.domain.Channel
 import ee.local.go3tvplus.domain.DeviceAuthState
 import ee.local.go3tvplus.domain.Go3Failure
@@ -71,6 +72,9 @@ data class TvUiState(
     val videoVisible: Boolean = false,
     val error: String? = null,
     val errorActionIndex: Int = 0,
+    val scheduledReminderIds: Set<String> = emptySet(),
+    val scheduledAutoTuneIds: Set<String> = emptySet(),
+    val notice: String? = null,
     val isDemo: Boolean = false,
 )
 
@@ -94,11 +98,15 @@ class TvViewModel(
     private var seekCloseJob: Job? = null
     private var playbackHealthJob: Job? = null
     private var playbackRetryJob: Job? = null
+    private var programActionJob: Job? = null
+    private var noticeJob: Job? = null
     private var activeTicket: PlaybackTicket? = null
     private var pendingChannelId: String? = null
     private var retryCount = 0
     private var wasBackgrounded = false
     private var manuallyTimeShifted = false
+    private var scheduledProgramActions: Map<String, ScheduledProgramAction> = emptyMap()
+    private val shownReminderIds = mutableSetOf<String>()
     private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
@@ -115,6 +123,15 @@ class TvViewModel(
                 audioTrackLabel = tvPlayer.audioTrackLabel(),
                 subtitleTrackLabel = tvPlayer.subtitleTrackLabel(),
             )
+        }
+        programActionJob = viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            scheduledProgramActions = repository.scheduledProgramActions()
+                .filter { it.startsAtEpochMs >= now - PROGRAM_ACTION_GRACE_MS }
+                .associateBy(ScheduledProgramAction::programId)
+            publishScheduledProgramActions()
+            repository.saveScheduledProgramActions(scheduledProgramActions.values)
+            runProgramActionScheduler()
         }
         viewModelScope.launch {
             authCoordinator.state.collect { auth ->
@@ -239,6 +256,12 @@ class TvViewModel(
         }
         if (snapshot.overlay == Overlay.GUIDE && event.keyCode.isConfirmKey()) {
             return handleGuideConfirm(event)
+        }
+        if (snapshot.overlay == Overlay.GUIDE && event.keyCode in PROGRAM_COLOR_KEYS) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                handleGuideColorKey(event.keyCode)
+            }
+            return true
         }
         if (event.keyCode in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 || event.keyCode in KeyEvent.KEYCODE_NUMPAD_0..KeyEvent.KEYCODE_NUMPAD_9) {
             if (event.action == KeyEvent.ACTION_UP) {
@@ -447,6 +470,127 @@ class TvViewModel(
             else -> return false
         }
         return true
+    }
+
+    private fun handleGuideColorKey(keyCode: Int) {
+        if (keyCode == KeyEvent.KEYCODE_PROG_YELLOW) {
+            showNotice("ROHELINE meeldetuletus  •  SININE automaatlülitus  •  PUNANE eemalda")
+            return
+        }
+        val snapshot = mutableState.value
+        val program = programsForGuideChannel(snapshot).getOrNull(snapshot.guideProgramIndex)
+        if (program == null || !program.startsAt.isAfter(Instant.now())) {
+            showNotice("Meeldetuletuse saab lisada tulevasele saatele")
+            return
+        }
+        val previous = scheduledProgramActions[program.id]
+        val updated = when (keyCode) {
+            KeyEvent.KEYCODE_PROG_GREEN -> ScheduledProgramAction(
+                programId = program.id,
+                channelId = program.channelId,
+                startsAtEpochMs = program.startsAt.toEpochMilli(),
+                reminder = previous?.reminder != true,
+                autoTune = previous?.autoTune == true,
+            )
+            KeyEvent.KEYCODE_PROG_BLUE -> ScheduledProgramAction(
+                programId = program.id,
+                channelId = program.channelId,
+                startsAtEpochMs = program.startsAt.toEpochMilli(),
+                reminder = previous?.reminder == true,
+                autoTune = previous?.autoTune != true,
+            )
+            KeyEvent.KEYCODE_PROG_RED -> null
+            else -> return
+        }?.takeIf { it.reminder || it.autoTune }
+
+        scheduledProgramActions = scheduledProgramActions.toMutableMap().apply {
+            if (updated == null) remove(program.id) else put(program.id, updated)
+        }
+        shownReminderIds.remove(program.id)
+        publishScheduledProgramActions()
+        viewModelScope.launch { repository.saveScheduledProgramActions(scheduledProgramActions.values) }
+        val message = when {
+            updated == null -> "${program.title}: toiming eemaldatud"
+            updated.reminder && updated.autoTune -> "${program.title}: meeldetuletus ja automaatlülitus"
+            updated.autoTune -> "${program.title}: automaatlülitus"
+            else -> "${program.title}: meeldetuletus"
+        }
+        showNotice(message)
+    }
+
+    private fun publishScheduledProgramActions() {
+        mutableState.value = mutableState.value.copy(
+            scheduledReminderIds = scheduledProgramActions.values
+                .filter(ScheduledProgramAction::reminder)
+                .mapTo(mutableSetOf(), ScheduledProgramAction::programId),
+            scheduledAutoTuneIds = scheduledProgramActions.values
+                .filter(ScheduledProgramAction::autoTune)
+                .mapTo(mutableSetOf(), ScheduledProgramAction::programId),
+        )
+    }
+
+    private suspend fun runProgramActionScheduler() {
+        while (true) {
+            val now = System.currentTimeMillis()
+            val snapshot = mutableState.value
+            val dueReminders = scheduledProgramActions.values.filter {
+                it.reminder && it.programId !in shownReminderIds &&
+                    now >= it.startsAtEpochMs - PROGRAM_REMINDER_LEAD_MS && now < it.startsAtEpochMs
+            }
+            if (!wasBackgrounded) {
+                dueReminders.forEach { action ->
+                    shownReminderIds += action.programId
+                    val program = snapshot.programsByChannel[action.channelId]
+                        .orEmpty().firstOrNull { it.id == action.programId }
+                    showNotice("${program?.title ?: "Saade"} algab ühe minuti pärast")
+                }
+            }
+
+            val dueActions = scheduledProgramActions.values.filter {
+                now >= it.startsAtEpochMs && now <= it.startsAtEpochMs + PROGRAM_ACTION_GRACE_MS
+            }
+            if (!wasBackgrounded && dueActions.isNotEmpty()) {
+                dueActions.forEach { action ->
+                    val currentState = mutableState.value
+                    val program = currentState.programsByChannel[action.channelId]
+                        .orEmpty().firstOrNull { it.id == action.programId }
+                    if (action.autoTune) {
+                        currentState.channels.firstOrNull { it.id == action.channelId }?.let(::tune)
+                    }
+                    showNotice(
+                        if (action.autoTune) "${program?.title ?: "Saade"} algas — lülitan kanalile"
+                        else "${program?.title ?: "Saade"} algas",
+                    )
+                }
+                val completedIds = dueActions.mapTo(mutableSetOf(), ScheduledProgramAction::programId)
+                scheduledProgramActions = scheduledProgramActions - completedIds
+                shownReminderIds.removeAll(completedIds)
+                publishScheduledProgramActions()
+                repository.saveScheduledProgramActions(scheduledProgramActions.values)
+            }
+
+            val expiredIds = scheduledProgramActions.values
+                .filter { now > it.startsAtEpochMs + PROGRAM_ACTION_GRACE_MS }
+                .mapTo(mutableSetOf(), ScheduledProgramAction::programId)
+            if (expiredIds.isNotEmpty()) {
+                scheduledProgramActions = scheduledProgramActions - expiredIds
+                shownReminderIds.removeAll(expiredIds)
+                publishScheduledProgramActions()
+                repository.saveScheduledProgramActions(scheduledProgramActions.values)
+            }
+            delay(PROGRAM_ACTION_POLL_MS)
+        }
+    }
+
+    private fun showNotice(message: String) {
+        mutableState.value = mutableState.value.copy(notice = message)
+        noticeJob?.cancel()
+        noticeJob = viewModelScope.launch {
+            delay(PROGRAM_NOTICE_TIMEOUT_MS)
+            if (mutableState.value.notice == message) {
+                mutableState.value = mutableState.value.copy(notice = null)
+            }
+        }
     }
 
     private fun handleGuideConfirm(event: KeyEvent): Boolean {
@@ -1093,12 +1237,13 @@ class TvViewModel(
         seekUiJob?.cancel()
         seekCloseJob?.cancel()
         playbackHealthJob?.cancel()
+        noticeJob?.cancel()
         playbackRetryJob?.cancel()
         playbackRetryJob = null
         tvPlayer.stopAndClear()
         val sessionId = activeTicket?.playbackSessionId
         activeTicket = null
-        mutableState.value = mutableState.value.copy(videoVisible = false, loading = false)
+        mutableState.value = mutableState.value.copy(videoVisible = false, loading = false, notice = null)
         cleanupScope.launch { repository.closePlayback(sessionId) }
     }
 
@@ -1162,6 +1307,8 @@ class TvViewModel(
         seekUiJob?.cancel()
         seekCloseJob?.cancel()
         playbackHealthJob?.cancel()
+        programActionJob?.cancel()
+        noticeJob?.cancel()
         val sessionId = activeTicket?.playbackSessionId
         cleanupScope.launch { repository.closePlayback(sessionId) }
         tvPlayer.release()
@@ -1177,6 +1324,16 @@ class TvViewModel(
 
 private const val CHANNEL_RAIL_TIMEOUT_MS = 5_000L
 private const val SEEK_OVERLAY_TIMEOUT_MS = 10_000L
+private const val PROGRAM_REMINDER_LEAD_MS = 60_000L
+private const val PROGRAM_ACTION_GRACE_MS = 5 * 60_000L
+private const val PROGRAM_ACTION_POLL_MS = 15_000L
+private const val PROGRAM_NOTICE_TIMEOUT_MS = 12_000L
+private val PROGRAM_COLOR_KEYS = setOf(
+    KeyEvent.KEYCODE_PROG_RED,
+    KeyEvent.KEYCODE_PROG_GREEN,
+    KeyEvent.KEYCODE_PROG_YELLOW,
+    KeyEvent.KEYCODE_PROG_BLUE,
+)
 
 private fun Int.floorMod(modulus: Int): Int = ((this % modulus) + modulus) % modulus
 
