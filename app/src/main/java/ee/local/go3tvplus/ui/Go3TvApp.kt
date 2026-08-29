@@ -540,27 +540,17 @@ private fun GuideOverlay(state: TvUiState) {
                         Text(selectedProgram.description.orEmpty(), color = Color(0xFFAAB9C9), fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                     if (selectedProgram.id in state.scheduledReminderIds) {
-                        Text(
-                            buildAnnotatedString {
-                                withStyle(SpanStyle(color = Color(0xFF59E391))) { append("●") }
-                                append("  MEELDETULETUS")
-                            },
-                            modifier = Modifier.padding(start = 9.dp).background(Color(0xFF145A3B), RoundedCornerShape(12.dp)).padding(horizontal = 9.dp, vertical = 4.dp),
-                            color = Color(0xFFC9FFE0),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
+                        Box(
+                            modifier = Modifier.padding(start = 9.dp).size(10.dp)
+                                .background(Color(0xFF59E391), RoundedCornerShape(50))
+                                .border(1.dp, Color(0xFF0A2231), RoundedCornerShape(50)),
                         )
                     }
                     if (selectedProgram.id in state.scheduledAutoTuneIds) {
-                        Text(
-                            buildAnnotatedString {
-                                withStyle(SpanStyle(color = Color(0xFF55B4FF))) { append("●") }
-                                append("  AUTOLÜLITUS")
-                            },
-                            modifier = Modifier.padding(start = 7.dp).background(Color(0xFF174E82), RoundedCornerShape(12.dp)).padding(horizontal = 9.dp, vertical = 4.dp),
-                            color = Color(0xFFD5EAFF),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
+                        Box(
+                            modifier = Modifier.padding(start = 7.dp).size(10.dp)
+                                .background(Color(0xFF55B4FF), RoundedCornerShape(50))
+                                .border(1.dp, Color(0xFF0A2231), RoundedCornerShape(50)),
                         )
                     }
                     val status = when {
