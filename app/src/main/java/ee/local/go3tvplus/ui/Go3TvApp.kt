@@ -516,6 +516,8 @@ private fun GuideOverlay(state: TvUiState) {
                         windowStart = windowStart,
                         windowEnd = windowEnd,
                         now = now,
+                        scheduledReminderIds = state.scheduledReminderIds,
+                        scheduledAutoTuneIds = state.scheduledAutoTuneIds,
                     )
                 }
             }
@@ -596,6 +598,8 @@ private fun GuideChannelRow(
     windowStart: Instant,
     windowEnd: Instant,
     now: Instant,
+    scheduledReminderIds: Set<String>,
+    scheduledAutoTuneIds: Set<String>,
 ) {
     val selectedChannel = channelIndex == selectedChannelIndex
     val rowColor = if (selectedChannel) SelectedRow else Color(0x3D142A42)
@@ -628,6 +632,8 @@ private fun GuideChannelRow(
             windowStart = windowStart,
             windowEnd = windowEnd,
             now = now,
+            scheduledReminderIds = scheduledReminderIds,
+            scheduledAutoTuneIds = scheduledAutoTuneIds,
             modifier = Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(7.dp)).background(Color(0xB5091829)),
         )
     }
@@ -640,6 +646,8 @@ private fun GuideTimelineCanvas(
     windowStart: Instant,
     windowEnd: Instant,
     now: Instant,
+    scheduledReminderIds: Set<String>,
+    scheduledAutoTuneIds: Set<String>,
     modifier: Modifier,
 ) {
     val fillPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
@@ -649,6 +657,9 @@ private fun GuideTimelineCanvas(
     val linePaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
     val progressTrackPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
     val progressPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
+    val actionHaloPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
+    val reminderPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
+    val autoTunePaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
     val drawingPrograms = remember(programs, selectedProgramId, windowStart, windowEnd) {
         programs
             .filter { ProgramWindow.overlaps(it, windowStart, windowEnd) }
@@ -670,6 +681,9 @@ private fun GuideTimelineCanvas(
         linePaint.color = Cyan.copy(alpha = 0.32f).toArgb()
         progressTrackPaint.color = Color(0xA0061728).toArgb()
         progressPaint.color = Cyan.toArgb()
+        actionHaloPaint.color = Color(0xCC06121F).toArgb()
+        reminderPaint.color = Color(0xFF59E391).toArgb()
+        autoTunePaint.color = Color(0xFF55B4FF).toArgb()
 
         // Keep the current-time marker behind programme cards. It remains visible
         // in the narrow gaps without ever crossing programme titles.
@@ -719,6 +733,25 @@ private fun GuideTimelineCanvas(
                     if (progress > 0f) {
                         val filled = RectF(barLeft, track.top, barLeft + (barRight - barLeft) * progress, barBottom)
                         canvas.drawRoundRect(filled, barHeight / 2, barHeight / 2, progressPaint)
+                    }
+                }
+
+                val hasReminder = program.id in scheduledReminderIds
+                val hasAutoTune = program.id in scheduledAutoTuneIds
+                if (hasReminder || hasAutoTune) {
+                    val dotRadius = 3.5.dp.toPx()
+                    val haloRadius = dotRadius + 1.5.dp.toPx()
+                    val dotGap = 3.dp.toPx()
+                    val dotY = rect.top + 7.dp.toPx()
+                    val rightDotX = rect.right - 8.dp.toPx()
+                    val reminderX = if (hasReminder && hasAutoTune) rightDotX - dotRadius * 2 - dotGap else rightDotX
+                    if (hasReminder) {
+                        canvas.drawCircle(reminderX, dotY, haloRadius, actionHaloPaint)
+                        canvas.drawCircle(reminderX, dotY, dotRadius, reminderPaint)
+                    }
+                    if (hasAutoTune) {
+                        canvas.drawCircle(rightDotX, dotY, haloRadius, actionHaloPaint)
+                        canvas.drawCircle(rightDotX, dotY, dotRadius, autoTunePaint)
                     }
                 }
             }
