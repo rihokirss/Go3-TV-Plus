@@ -1,35 +1,106 @@
 # Go3 TV+
 
-Privaatne Android TV 9+ klient, mille põhivaade on alati mängiv telekanal. Rakendus sisaldab täisekraani mängijat, läbipaistvat telekava, kiiret kanaliriba, numbriklahvide tuge, viimase kanali taastamist, profiilivalikut ning QR/seadmekoodiga autentimise olekumasinat.
+Mitteametlik Android TV klient kiireks ja puldisõbralikuks Go3 otse-TV vaatamiseks. Rakendus avab viimase kanali, hoiab video telekava all mängimas ning teeb kanalivahetuse võimalikuks nii D-padi, `CH+/CH−` kui ka numbriklahvidega.
 
-## Praegune seis
+> [!IMPORTANT]
+> See on sõltumatu kogukonnaprojekt, mitte Go3 ametlik rakendus. Go3 nimi ja teenus kuuluvad nende omanikele. Rakendus eeldab kasutaja enda kehtivat Go3 tellimust ning kasutab Go3 tavapärast seadmesidumist ja ametlikku DRM-litsentsivoogu. DRM-i ega teenuse piiranguid ei eemaldata.
 
-Rakendus kasutab kasutaja enda HAR-i ja Android TV kliendi põhjal kinnitatud Go3 seadmesidumist, kanaliloendit, EPG kataloogi, playback-session'it ning ametlikku Widevine'i litsentsivoogu. QR-sidumine, profiili meeldejätmine, live-video ja seitsme päeva EPG on kontrollitud füüsilistel Android TV seadmetel.
+## Põhivõimalused
 
-Kui kanal pakub 50 fps varianti, hoiab mängija selle raja valituna, et kiire liikumise ajal ei tekiks 50 ja 25 fps vahel pendeldamist. Kanalid, millel 50 fps rada pole, mängivad tavapäraselt 25 fps. Go3 praeguses spordikanalite kvaliteediredelis tähendab 50 fps 1080p/8 Mbps voogu.
+- viimati vaadatud kanal avaneb automaatselt;
+- läbipaistev ja tihe EPG töötab mängiva video peal;
+- otse-TV ja Go3 pakutav järelvaatamine;
+- kiire kanaliriba, lemmikud ning muudetavad kanalinumbrid;
+- kanalivahetus `CH+/CH−`, D-padi ja numbriklahvidega;
+- ajanihe, 10-sekundiline kerimine ja saatevahetuste markerid ajaribal;
+- saate meeldetuletused ja automaatne kanalile lülitumine värvinuppudega;
+- kanaliteülene heli- ja subtiitrikeele eelistus;
+- Go3 vaatamisprofiilid ning turvaline QR-/seadmekoodiga sidumine;
+- Android MediaSessioni tugi, et telefon ja süsteem näitaksid kanalit ning saadet;
+- serveripoolse vaatamisseansi korrektne sulgemine kanali vahetamisel, rakendusest väljumisel ja unerežiimis.
 
-Go3 API ei ole avalik ja võib muutuda. Teenusespetsiifiline leping on koondatud `Go3HttpGateway` adapterisse; DRM-i, sertifikaadikaitset ega APK kontrolli ei murta.
+## Nõuded
+
+- Android TV või Google TV, Android 9 või uuem;
+- aktiivne Go3 tellimus;
+- teleris lubatud tundmatutest allikatest paigaldamine;
+- soovituslikult vähemalt 10 Mbps internetiühendus.
+
+Samsung Tizeni ja LG webOS-i jaoks see APK ei sobi. Need platvormid vajavad eraldi rakendust.
+
+## APK paigaldamine
+
+### 1. Laadi APK alla
+
+Ava GitHubi lehel [Releases](https://github.com/rihokirss/Go3-TV-Plus/releases/latest) ja laadi alla `Go3-TV-Plus-<versioon>.apk`.
+
+### 2. Paigalda telerisse
+
+Lihtsaimad võimalused on kopeerida APK mälupulgale või saata see telerisse failiedastusrakendusega. Ava APK teleri failihalduris ja luba küsimise korral sellel rakendusel tundmatuid rakendusi paigaldada.
+
+Google TV-s asub vastav luba tavaliselt menüüs:
+
+```text
+Seaded → Rakendused → Erijuurdepääs → Tundmatute rakenduste installimine
+```
+
+Menüü täpne nimi sõltub teleri tootjast ja Androidi versioonist.
+
+### Paigaldamine ADB-ga
+
+Luba teleris arendaja valikud ja Wireless debugging, ühenda arvuti teleriga ning käivita:
+
+```bash
+adb connect TELERI_IP:ADB_PORT
+adb install -r Go3-TV-Plus-0.4.25.apk
+```
+
+`-r` uuendab olemasolevat rakendust ja jätab sidumise ning seaded alles. Kui Android kuvab `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, on sama paketiga rakendus allkirjastatud teise võtmega. Vana rakenduse eemaldamine lahendab konflikti, kuid kustutab selle kohalikud seaded ja konto sidumise.
+
+Tehniline paketitunnus on ajaloolise uuendusühilduvuse tõttu `ee.local.go3tvplus.debug`; avaldatud APK ise ei ole debuggable.
+
+### 3. Seo Go3 konto
+
+1. Ava teleris Go3 TV+.
+2. Skanni kuvatav QR-kood telefoniga või sisesta ekraanil olev seadmekood.
+3. Kinnita seade oma Go3 kontol.
+4. Kui kontol on mitu Go3 profiili, vali soovitud vaatamisprofiil.
+
+Parooli rakendusse ei sisestata ega salvestata. Tokenid hoitakse Android Keystore'iga kaitstult.
 
 ## Puldinupud
 
 | Nupp | Toiming |
 |---|---|
-| `CH+ / CH−` | Vaheta kanal kohe ja näita külgriba |
+| `CH+ / CH−` | Vaheta kanal kohe ja näita kanaliriba |
 | `↑ / ↓` | Ava kanaliriba ja vali kanal |
-| `→` | Ava läbipaistev EPG; EPG-s liigu järgmise saate juurde |
+| `→` | Ava EPG; EPG-s liigu järgmise saate juurde |
 | `←` | Ava rakenduse seaded; EPG-s liigu eelmise saate juurde |
-| `OK` | Kinnita valik; puhtas mängijavaates ava ajariba |
-| Hoia EPG-s `OK` | Lülita kõikide kanalite ja lemmikute filter ümber |
-| EPG-s `punane` | Hüppa telekavas üks päev tagasi |
-| EPG-s `roheline` | Hüppa telekavas üks päev edasi |
-| EPG-s `kollane` | Lisa või eemalda valitud saate meeldetuletus |
+| `OK` | Kinnita valik; mängijavaates ava ajariba |
+| Hoia EPG-s `OK` | Vaheta kõigi kanalite ja lemmikute filtrit |
+| EPG-s `punane / roheline` | Eelmine / järgmine päev |
+| EPG-s `kollane` | Lisa või eemalda saate meeldetuletus |
 | EPG-s `sinine` | Lisa või eemalda automaatne kanalile lülitumine |
-| `GUIDE / MENU` | Ava EPG, kui puldil vastav nupp siiski leidub |
-| `0–9` | Sisesta 1–3-kohaline kanalinumber; häälestus 2 sekundi järel |
-| `BACK` | Sulge esmalt aktiivne kiht, siis rakendus |
-| `HOME` | Peata heli ja video ning sulge Go3 serveriseanss |
+| `GUIDE / MENU` | Ava EPG, kui puldil vastav nupp leidub |
+| `0–9` | Sisesta 1–3-kohaline kanalinumber; häälestus pärast sisestuspausi |
+| `BACK` | Sulge esmalt aktiivne kiht, seejärel rakendus |
+| `HOME` | Peata taasesitus ja sulge Go3 serveriseanss |
 
-## Ehitamine
+## Uuendamine
+
+Laadi uuem APK Releases-lehelt ja paigalda see vana peale. Rakendus asendatakse ning konto sidumine, lemmikud, kanalinumbrid ja muud eelistused jäävad alles, kui paketitunnus ja allkiri ühtivad.
+
+Rakendusel pole veel automaatset uuendajat ega Play Store'i versiooni.
+
+## Teadaolevad piirangud
+
+- Go3 API ei ole avalik ning teenuse muudatus võib ajutiselt sidumise, EPG või taasesituse katki teha.
+- Näha ja mängida saab ainult kasutaja Go3 paketis olevaid kanaleid ning saateid.
+- Go3 seadme- ja samaaegsete striimide piirangud kehtivad ka selles rakenduses.
+- Widevine'i, geoblokki, paketipiiranguid ega muid teenuse kaitseid ei murta.
+- Mõne saate järelvaatamine sõltub Go3 õigustest ja sellest, kas teenus annab toimiva catch-up kirje.
+
+## Lähtekoodist ehitamine
 
 Vaja on JDK 17 ja Android SDK 37.
 
@@ -43,21 +114,19 @@ Minifitseeritud sideload-APK tekib asukohta:
 dist/Go3-TV-Plus-<versioon>.apk
 ```
 
-Debug-APK:
+Avaldatud versiooni allkirjavõtit repos ei hoita. Teise võtmega ehitatud APK ei saa GitHub Release'ist paigaldatud rakendust kohapeal uuendada.
 
-```bash
-./gradlew assembleDebug
-```
+## Arhitektuur ja turvalisus
 
-Release kasutab hetkel masina Android debug-keystore'i, et samal teleril saaks APK-d uuendada. Võtit ei hoita repos. Avalikuks levitamiseks tuleb luua eraldi release-keystore ja hankida Go3 ametlik integratsiooniluba.
+- `domain/Go3Gateway.kt` — teenusespetsiifiline liides UI ja andmekihi vahel;
+- `data/AuthCoordinator.kt` — QR-kood, pollimine, aegumine ja tokeni uuendamine;
+- `data/local/` — Roomi vahemälu, DataStore'i eelistused ja Android Keystore'iga kaitstud tokenid;
+- `player/TvPlayer.kt` — Media3 ExoPlayer, MediaSession ja ametlik DRM-voog;
+- `ui/TvViewModel.kt` — EPG, kanalite, puldi ja taasesituse olek;
+- `ui/Go3TvApp.kt` — Android TV kasutajaliides.
 
-## Arhitektuur
+Rakendus ei logi HTTP kehi, bearer-token'e ega DRM-päiseid. HAR-id, võtmed, APK-d ja lokaalsed captures-failid on Gitist välistatud. Täpsem info: [turvalisus](docs/SECURITY.md).
 
-- `domain/Go3Gateway.kt` — ainus teenusespetsiifiline liides UI ja andmekihi jaoks.
-- `data/AuthCoordinator.kt` — QR-koodi küsimine, pollimine, aegumine ja tokeni uuendamine.
-- `data/local/` — Roomi EPG/kanalivahemälu, DataStore'i eelistused ja Android Keystore'iga krüpteeritud tokenid.
-- `player/TvPlayer.kt` — Media3 ExoPlayer, MediaSession ja Widevine/PlayReady/ClearKey konfiguratsioon.
-- `ui/TvViewModel.kt` — kanali-, EPG-, numbrisisestuse ja puldi olekumasin.
-- `ui/Go3TvApp.kt` — 10-foot UI, läbipaistvad overlay'd ja profiili-/sidumisvaated.
+## Vastutuse piirang
 
-Rakendus ei logi HTTP kehi, bearer-token'e ega DRM-päiseid. HAR-id, võtmed ja `secrets.properties` on `.gitignore`-is.
+Projekt on eksperimentaalne ja mõeldud isiklikuks kasutuseks. Kasutaja vastutab selle eest, et rakenduse kasutamine vastaks tema Go3 lepingu tingimustele ja kohalikele õigusaktidele.
