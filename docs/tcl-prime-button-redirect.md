@@ -1,9 +1,9 @@
-# TCL Prime Video button redirect
+# TCL Prime Video and Sony Netflix button redirect
 
-This note describes the TCL-specific workaround that makes the physical Prime
-Video remote button launch Go3 TV+. It is intentionally separate from the TV
-app: branded global keys are intercepted by Android before a normal app can
-receive them.
+This note describes the device-specific workarounds that make the TCL Prime
+Video and Sony Netflix remote buttons launch Go3 TV+. The helper is
+intentionally separate from the TV app: branded global keys are intercepted by
+Android before a normal activity can receive them.
 
 ## What the remote sends
 
@@ -47,7 +47,7 @@ this workaround.
 
 ## Autonomous helper app
 
-The optional `tclredirect` module builds a separate helper APK. It connects to
+The optional `tclredirect` module builds a separate, device-aware helper APK. On TCL it connects to
 the TV's ADB daemon through `127.0.0.1:5555`, using its own RSA key stored in
 the helper's device-protected private storage. It then starts a small process
 with Android's ADB shell identity. The process:
@@ -82,23 +82,48 @@ not the computer's key. Network ADB must remain enabled on the TCL.
 The remote listener and its log live at:
 
 ```text
-/data/local/tmp/go3-prime-button-redirect.sh
-/data/local/tmp/go3-prime-button-redirect.pid
-/data/local/tmp/go3-prime-button-redirect.log
+/data/local/tmp/go3-button-redirect.sh
+/data/local/tmp/go3-button-redirect.pid
+/data/local/tmp/go3-button-redirect.log
 ```
 
 Useful checks:
 
 ```bash
 adb -s <TCL_IP>:5555 shell \
-  'cat /data/local/tmp/go3-prime-button-redirect.pid'
+  'cat /data/local/tmp/go3-button-redirect.pid'
 adb -s <TCL_IP>:5555 shell \
-  'tail /data/local/tmp/go3-prime-button-redirect.log'
+  'tail /data/local/tmp/go3-button-redirect.log'
 ```
 
 On the physical restart test, the old listener PID was `4749`; the helper
 created a new listener with PID `4262` about nine seconds after Android reported
 boot completion.
+
+## Sony Netflix button
+
+The tested Sony BRAVIA remote maps scan code `583` (`0x0247`) to Android
+`KEYCODE_BUTTON_4` (`191`). Sony maps that global key directly to
+`com.netflix.ninja/.MainActivity`, so a normal manifest broadcast receiver does
+not receive it. Disabling Netflix alone only makes Sony display “feature not
+available”.
+
+On Sony, the same helper enables its own accessibility key-filter service using
+the one-time authorized local ADB connection. The service consumes
+`KEYCODE_BUTTON_4` before Sony's global-key handler and launches Go3 TV+.
+Enabling it preserves any accessibility services that were already active.
+The enabled-service setting is persistent, so no shell listener, computer,
+network ADB connection, or periodic recovery job is required after setup.
+
+The helper disables `com.netflix.ninja` for user 0 during setup. Choosing the
+helper's **Taasta Netflixi nupp** action removes only the Go3 key-filter service
+from the enabled accessibility-service list and re-enables Netflix. The tested
+physical press was recorded as:
+
+```text
+I/Go3ButtonRedirect: Netflix button intercepted; opening Go3 TV+
+mResumedActivity: ee.local.go3tvplus.debug/ee.local.go3tvplus.MainActivity
+```
 
 ## Restoring TCL's original behaviour
 

@@ -1,16 +1,16 @@
 <resources>
     <string name="app_name">Go3 TV+ nupusuunaja</string>
     <string name="brand_name">Go3 TV+</string>
-    <string name="screen_title">TCL Prime-nupu suunaja</string>
-    <string name="screen_description">Helper käivitab Prime Video nupuga Go3 TV+ ja taastab kuulaja pärast teleri täielikku restarti.</string>
-    <string name="status_configured">Nupusuunaja on seadistatud. Kontrolli ühendust või taasta TCL-i algne käitumine.</string>
+    <string name="status_configured">Nupusuunaja on seadistatud. Kontrolli ühendust või taasta nupu algne käitumine.</string>
     <string name="status_ready">Valmis seadistamiseks. Esimesel korral kinnita teleri ADB dialoogis „Luba alati”.</string>
     <string name="status_connecting">Ühendun teleri kohaliku ADB-ga. Kui ilmub luba küsiv dialoog, vali „Luba alati” ja kinnita.</string>
-    <string name="status_running">Valmis. Prime Video nupp avab nüüd Go3 TV+ ning helper taastab kuulaja pärast restarti.</string>
+    <string name="status_running">Valmis. %1$s nupp avab nüüd Go3 TV+ ning abirakendus taastab suunamise pärast restarti.</string>
     <string name="status_setup_failed">Seadistamine ebaõnnestus: %1$s</string>
-    <string name="status_restoring">Taastan TCL-i algse Prime-nupu käitumise…</string>
-    <string name="status_restored">TCL-i algne Prime-nupu käitumine on taastatud.</string>
+    <string name="status_restoring">Taastan %1$s-i algse %2$s-nupu käitumise…</string>
+    <string name="status_restored">%1$s-i algne %2$s-nupu käitumine on taastatud.</string>
     <string name="status_restore_failed">Taastamine ebaõnnestus: %1$s</string>
     <string name="action_setup">Seo ADB ja käivita</string>
-    <string name="action_restore">Taasta Prime-nupp</string>
+    <string name="action_restore">Taasta %1$s nupp</string>
+    <string name="accessibility_service_label">Go3 TV+ Sony nupusuunaja</string>
+    <string name="accessibility_service_description">Suunab Sony puldi Netflixi nupu Go3 TV+ rakendusse.</string>
 </resources>

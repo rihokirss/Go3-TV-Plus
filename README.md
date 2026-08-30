@@ -96,16 +96,18 @@ Parooli rakendusse ei sisestata ega salvestata. Tokenid hoitakse Android Keystor
 | `BACK` | Sulge esmalt aktiivne kiht, seejärel rakendus |
 | `HOME` | Peata taasesitus ja sulge Go3 serveriseanss |
 
-## TCL-i Prime Video nupp
+## TCL-i Prime Video ja Sony Netflixi nupp
 
-Testitud TCL Google TV jaoks on repos eraldi valikuline `tclredirect` helper.
-See võimaldab füüsilise Prime Video nupu suunata Go3 TV+ rakendusse ja taastab
-suunamise ka pärast teleri täielikku restarti. Helper ei kuulu põhi-APK-sse,
-sest lahendus sõltub konkreetsest TCL-i puldist ning eeldab, et võrgu-ADB jääb
-teleris lubatuks.
+Repos on eraldi valikuline, teleri tootja ära tundev `tclredirect` helper. See
+suunab testitud TCL Google TV Prime Video nupu või Sony BRAVIA Netflixi nupu
+Go3 TV+ rakendusse ning töötab ka pärast teleri täielikku restarti. TCL-i
+lahendus eeldab, et võrgu-ADB jääb teleris lubatuks; Sony lahendus kasutab
+püsivat ligipääsetavuse võtmefiltrit ega vaja pärast seadistamist võrgu-ADB-d.
+Helper ei kuulu põhi-APK-sse, sest lahendus sõltub konkreetsest telerist ja
+puldist.
 
 Paigaldamine, taastamine, turvapiirangud ja tehniline taust on kirjas
-[TCL Prime-nupu märkmetes](docs/tcl-prime-button-redirect.md).
+[nupusuunaja märkmetes](docs/tcl-prime-button-redirect.md).
 
 ## Uuendamine
 

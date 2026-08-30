@@ -18,6 +18,7 @@ class SetupActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var startButton: Button
     private lateinit var restoreButton: Button
+    private val profile by lazy { RedirectProfile.current() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -60,14 +61,14 @@ class SetupActivity : Activity() {
             typeface = Typeface.DEFAULT_BOLD
         })
         root.addView(TextView(this).apply {
-            text = getString(R.string.screen_title)
+            text = profile.title
             textSize = 38f
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
             setPadding(0, dp(10), 0, 0)
         })
         root.addView(TextView(this).apply {
-            text = getString(R.string.screen_description)
+            text = profile.description
             textSize = 19f
             setTextColor(Color.rgb(203, 220, 239))
             setPadding(0, dp(14), 0, 0)
@@ -94,6 +95,7 @@ class SetupActivity : Activity() {
             setOnClickListener { startRedirect() }
         }
         restoreButton = actionButton(getString(R.string.action_restore)).apply {
+            text = getString(R.string.action_restore, profile.sourceButtonName)
             setOnClickListener { restoreRedirect() }
         }
         buttons.addView(startButton)
@@ -132,7 +134,7 @@ class SetupActivity : Activity() {
             runOnUiThread {
                 result.onSuccess {
                     RedirectScheduler.schedule(this)
-                    status.text = getString(R.string.status_running)
+                    status.text = getString(R.string.status_running, profile.sourceButtonName)
                 }.onFailure {
                     status.text = getString(R.string.status_setup_failed, it.message ?: it.javaClass.simpleName)
                 }
@@ -142,13 +144,13 @@ class SetupActivity : Activity() {
     }
 
     private fun restoreRedirect() {
-        setBusy(true, getString(R.string.status_restoring))
+        setBusy(true, getString(R.string.status_restoring, profile.deviceName, profile.sourceButtonName))
         executor.execute {
             val result = runCatching { AdbRedirectManager(this).restoreOriginalButton(20) }
             runOnUiThread {
                 result.onSuccess {
                     RedirectScheduler.cancel(this)
-                    status.text = getString(R.string.status_restored)
+                    status.text = getString(R.string.status_restored, profile.deviceName, profile.sourceButtonName)
                 }.onFailure {
                     status.text = getString(R.string.status_restore_failed, it.message ?: it.javaClass.simpleName)
                 }

@@ -15,6 +15,7 @@ import java.util.concurrent.TimeUnit
 class AdbRedirectManager(context: Context) {
     private val storageContext = context.createDeviceProtectedStorageContext()
     private val preferences = storageContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+    private val profile = RedirectProfile.current()
     private val privateKey = File(storageContext.filesDir, "tcl_redirect_adb_private.key")
     private val publicKey = File(storageContext.filesDir, "tcl_redirect_adb_public.key")
 
@@ -33,7 +34,7 @@ class AdbRedirectManager(context: Context) {
     @Synchronized
     fun restoreOriginalButton(authorizationTimeoutSeconds: Long): String {
         val result = withAdb(authorizationTimeoutSeconds) { connection ->
-            runShell(connection, stopCommand(enablePartnerCustomizer = true))
+            runShell(connection, stopCommand(restoreCompetingApp = true))
         }
         preferences.edit().putBoolean(KEY_CONFIGURED, false).apply()
         return result.ifBlank { "RESTORED" }
@@ -88,21 +89,31 @@ class AdbRedirectManager(context: Context) {
     }
 
     private fun bootstrapCommand(): String {
+        if (!profile.usesTclAutoStart) {
+            return buildString {
+                append(disableCompetingAppCommand())
+                append(enableSonyAccessibilityCommand())
+                append("echo STARTED")
+            }
+        }
         val encodedScript = Base64.encodeToString(
             listenerScript().toByteArray(StandardCharsets.UTF_8),
             Base64.NO_WRAP,
         )
         return buildString {
-            append("cmd appops set $HELPER_PACKAGE APP_AUTO_START allow >/dev/null 2>&1; ")
+            if (profile.usesTclAutoStart) {
+                append("cmd appops set $HELPER_PACKAGE APP_AUTO_START allow >/dev/null 2>&1; ")
+                append(stopLegacyTclListenerCommand())
+            }
             append("if [ -r '$REMOTE_PID' ]; then ")
             append("pid=\$(cat '$REMOTE_PID'); ")
             append("if kill -0 \"\$pid\" >/dev/null 2>&1; then ")
-            append("pm disable-user --user 0 $PARTNER_CUSTOMIZER >/dev/null 2>&1; ")
+            append(disableCompetingAppCommand())
             append("echo ALREADY_RUNNING; exit 0; fi; fi; ")
-            append(stopCommand(enablePartnerCustomizer = false, printResult = false))
+            append(stopCommand(restoreCompetingApp = false, printResult = false))
             append("printf '%s' '$encodedScript' | base64 -d > '$REMOTE_SCRIPT'; ")
             append("chmod 755 '$REMOTE_SCRIPT'; ")
-            append("pm disable-user --user 0 $PARTNER_CUSTOMIZER >/dev/null 2>&1; ")
+            append(disableCompetingAppCommand())
             append("nohup setsid '$REMOTE_SCRIPT' </dev/null >/dev/null 2>&1 & ")
             append("sleep 1; ")
             append("if [ -r '$REMOTE_PID' ] && kill -0 \"\$(cat '$REMOTE_PID')\" >/dev/null 2>&1; ")
@@ -111,9 +122,10 @@ class AdbRedirectManager(context: Context) {
     }
 
     private fun stopCommand(
-        enablePartnerCustomizer: Boolean,
+        restoreCompetingApp: Boolean,
         printResult: Boolean = true,
     ): String = buildString {
+        if (profile.usesTclAutoStart) append(stopLegacyTclListenerCommand())
         append("if [ -r '$REMOTE_PID' ]; then ")
         append("pid=\$(cat '$REMOTE_PID'); ")
         append("pgid=\$(ps -A -o PID,PGID | awk -v target=\"\$pid\" '")
@@ -122,32 +134,32 @@ class AdbRedirectManager(context: Context) {
         append("else /system/bin/kill \"\$pid\" >/dev/null 2>&1 || true; fi; ")
         append("i=0; while kill -0 \"\$pid\" >/dev/null 2>&1 && [ \"\$i\" -lt 20 ]; ")
         append("do sleep 0.1; i=\$((i + 1)); done; rm -f '$REMOTE_PID'; fi; ")
-        if (enablePartnerCustomizer) {
-            append("pm enable --user 0 $PARTNER_CUSTOMIZER >/dev/null 2>&1; ")
-            append("cmd appops set $HELPER_PACKAGE APP_AUTO_START ignore >/dev/null 2>&1; ")
+        if (restoreCompetingApp) {
+            if (!profile.usesTclAutoStart) append(disableSonyAccessibilityCommand())
+            append("pm enable --user 0 ${profile.competingPackage} >/dev/null 2>&1; ")
+            if (profile.usesTclAutoStart) {
+                append("cmd appops set $HELPER_PACKAGE APP_AUTO_START ignore >/dev/null 2>&1; ")
+            }
         }
         if (printResult) append("echo RESTORED")
     }
 
     private fun listenerScript(): String {
         val dollar = '$'
+        val keyMatch = if (profile.symbolicKeyCode != null) {
+            "*EV_KEY*${profile.rawKeyCode}*DOWN*|*EV_KEY*${profile.symbolicKeyCode}*DOWN*"
+        } else {
+            "*EV_KEY*${profile.rawKeyCode}*DOWN*"
+        }
         return """
             #!/system/bin/sh
             echo "${dollar}${dollar}" > "$REMOTE_PID"
             trap 'rm -f "$REMOTE_PID"' EXIT
             while true; do
-              event=
-              for candidate in /dev/input/event*; do
-                if getevent -pl "${dollar}candidate" 2>/dev/null | grep -q "BT_RC.*Consumer Control"; then
-                  event="${dollar}candidate"
-                  break
-                fi
-              done
-              if [ -z "${dollar}event" ]; then sleep 2; continue; fi
-              getevent -lt "${dollar}event" 2>/dev/null | while IFS= read -r line; do
+              getevent -lt 2>/dev/null | while IFS= read -r line; do
                 case "${dollar}line" in
-                  *EV_KEY*02f0*DOWN*)
-                    echo "${dollar}(date +%FT%T) Prime button" >> "$REMOTE_LOG"
+                  $keyMatch)
+                    echo "${dollar}(date +%FT%T) ${profile.sourceButtonName} button" >> "$REMOTE_LOG"
                     am start --activity-clear-top --activity-single-top -n "$GO3_COMPONENT" >/dev/null 2>&1
                     ;;
                 esac
@@ -155,6 +167,49 @@ class AdbRedirectManager(context: Context) {
               sleep 1
             done
         """.trimIndent() + "\n"
+    }
+
+    private fun disableCompetingAppCommand(): String =
+        "pm disable-user --user 0 ${profile.competingPackage} >/dev/null 2>&1; "
+
+    private fun stopLegacyTclListenerCommand(): String = buildString {
+        append("if [ -r '$LEGACY_TCL_REMOTE_PID' ]; then ")
+        append("legacy_pid=\$(cat '$LEGACY_TCL_REMOTE_PID'); ")
+        append("legacy_pgid=\$(ps -A -o PID,PGID | awk -v target=\"\$legacy_pid\" '")
+        append("\$1 == target { print \$2; exit }'); ")
+        append("if [ -n \"\$legacy_pgid\" ]; then ")
+        append("/system/bin/kill -TERM \"-\$legacy_pgid\" >/dev/null 2>&1 || true; ")
+        append("else /system/bin/kill \"\$legacy_pid\" >/dev/null 2>&1 || true; fi; ")
+        append("rm -f '$LEGACY_TCL_REMOTE_PID' '$LEGACY_TCL_REMOTE_SCRIPT'; fi; ")
+    }
+
+    private fun enableSonyAccessibilityCommand(): String {
+        val dollar = '$'
+        return buildString {
+            append("current=${dollar}(settings get secure enabled_accessibility_services); ")
+            append("case \"${dollar}current\" in ")
+            append("null|'') next='$SONY_ACCESSIBILITY_SERVICE' ;; ")
+            append("*'$SONY_ACCESSIBILITY_SERVICE'*) next=\"${dollar}current\" ;; ")
+            append("*) next='$SONY_ACCESSIBILITY_SERVICE':\"${dollar}current\" ;; esac; ")
+            append("settings put secure enabled_accessibility_services \"${dollar}next\"; ")
+            append("settings put secure accessibility_enabled 1; ")
+        }
+    }
+
+    private fun disableSonyAccessibilityCommand(): String {
+        val dollar = '$'
+        return buildString {
+            append("current=${dollar}(settings get secure enabled_accessibility_services); ")
+            append("next=${dollar}(printf '%s' \"${dollar}current\" | sed ")
+            append("'s#^$SONY_ACCESSIBILITY_SERVICE:##; ")
+            append("s#:$SONY_ACCESSIBILITY_SERVICE${dollar}##; ")
+            append("s#^$SONY_ACCESSIBILITY_SERVICE${dollar}##; ")
+            append("s#:$SONY_ACCESSIBILITY_SERVICE:#:#'); ")
+            append("if [ -n \"${dollar}next\" ] && [ \"${dollar}next\" != null ]; then ")
+            append("settings put secure enabled_accessibility_services \"${dollar}next\"; ")
+            append("else settings delete secure enabled_accessibility_services; ")
+            append("settings put secure accessibility_enabled 0; fi; ")
+        }
     }
 
     private companion object {
@@ -166,9 +221,12 @@ class AdbRedirectManager(context: Context) {
         const val SOCKET_READ_TIMEOUT_MS = 60_000
         const val GO3_COMPONENT = "ee.local.go3tvplus.debug/ee.local.go3tvplus.MainActivity"
         const val HELPER_PACKAGE = "ee.local.go3tvplus.tclredirect"
-        const val PARTNER_CUSTOMIZER = "com.tcl.partnercustomizer"
-        const val REMOTE_SCRIPT = "/data/local/tmp/go3-prime-button-redirect.sh"
-        const val REMOTE_PID = "/data/local/tmp/go3-prime-button-redirect.pid"
-        const val REMOTE_LOG = "/data/local/tmp/go3-prime-button-redirect.log"
+        const val SONY_ACCESSIBILITY_SERVICE =
+            "ee.local.go3tvplus.tclredirect/.SonyButtonAccessibilityService"
+        const val REMOTE_SCRIPT = "/data/local/tmp/go3-button-redirect.sh"
+        const val REMOTE_PID = "/data/local/tmp/go3-button-redirect.pid"
+        const val REMOTE_LOG = "/data/local/tmp/go3-button-redirect.log"
+        const val LEGACY_TCL_REMOTE_SCRIPT = "/data/local/tmp/go3-prime-button-redirect.sh"
+        const val LEGACY_TCL_REMOTE_PID = "/data/local/tmp/go3-prime-button-redirect.pid"
     }
 }
