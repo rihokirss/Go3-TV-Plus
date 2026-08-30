@@ -16,6 +16,7 @@ import ee.local.go3tvplus.domain.Go3Failure
 import ee.local.go3tvplus.domain.PlaybackTicket
 import ee.local.go3tvplus.domain.Profile
 import ee.local.go3tvplus.domain.Program
+import ee.local.go3tvplus.domain.ProgramWindow
 import ee.local.go3tvplus.player.TvPlayer
 import ee.local.go3tvplus.player.SeekSnapshot
 import kotlinx.coroutines.CancellationException
@@ -35,6 +36,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Duration
 import java.time.Instant
+import java.time.ZoneId
 
 enum class Overlay {
     NONE, CHANNEL_RAIL, GUIDE, APP_SETTINGS, CHANNEL_SETTINGS, PROFILE_SETTINGS,
@@ -56,6 +58,7 @@ data class TvUiState(
     val guideChannelIndex: Int = 0,
     val guideProgramIndex: Int = 0,
     val guideAnchor: Instant? = null,
+    val guideWindowStart: Instant? = null,
     val settingsIndex: Int = 0,
     val appSettingsIndex: Int = 0,
     val profileSettingsIndex: Int = 0,
@@ -500,16 +503,32 @@ class TvViewModel(
             }
             KeyEvent.KEYCODE_DPAD_LEFT -> {
                 val next = (snapshot.guideProgramIndex - 1).coerceAtLeast(0)
+                val nextProgram = channelPrograms.getOrNull(next)
                 mutableState.value = snapshot.copy(
                     guideProgramIndex = next,
-                    guideAnchor = channelPrograms.getOrNull(next)?.startsAt ?: snapshot.guideAnchor,
+                    guideAnchor = nextProgram?.startsAt ?: snapshot.guideAnchor,
+                    guideWindowStart = nextProgram?.let {
+                        ProgramWindow.guideWindowStartKeepingVisible(
+                            snapshot.guideWindowStart
+                                ?: ProgramWindow.guideWindowStart(snapshot.guideAnchor ?: Instant.now(), ZoneId.systemDefault()),
+                            it,
+                        )
+                    } ?: snapshot.guideWindowStart,
                 )
             }
             KeyEvent.KEYCODE_DPAD_RIGHT -> {
                 val next = (snapshot.guideProgramIndex + 1).coerceAtMost(channelPrograms.lastIndex.coerceAtLeast(0))
+                val nextProgram = channelPrograms.getOrNull(next)
                 mutableState.value = snapshot.copy(
                     guideProgramIndex = next,
-                    guideAnchor = channelPrograms.getOrNull(next)?.startsAt ?: snapshot.guideAnchor,
+                    guideAnchor = nextProgram?.startsAt ?: snapshot.guideAnchor,
+                    guideWindowStart = nextProgram?.let {
+                        ProgramWindow.guideWindowStartKeepingVisible(
+                            snapshot.guideWindowStart
+                                ?: ProgramWindow.guideWindowStart(snapshot.guideAnchor ?: Instant.now(), ZoneId.systemDefault()),
+                            it,
+                        )
+                    } ?: snapshot.guideWindowStart,
                 )
             }
             else -> return false
@@ -681,6 +700,7 @@ class TvViewModel(
         mutableState.value = snapshot.copy(
             guideProgramIndex = programIndex,
             guideAnchor = resolvedStart ?: target,
+            guideWindowStart = ProgramWindow.guideWindowStart(resolvedStart ?: target, ZoneId.systemDefault()),
         )
     }
 
@@ -830,6 +850,7 @@ class TvViewModel(
 
     private fun toggleGuide() {
         val snapshot = mutableState.value
+        val now = Instant.now()
         val favoriteChannels = snapshot.channels.filter { it.id in snapshot.favoriteChannelIds }
         val favoritesActive = snapshot.favoritesOnly && favoriteChannels.isNotEmpty()
         val channels = if (favoritesActive) favoriteChannels else snapshot.channels
@@ -838,8 +859,9 @@ class TvViewModel(
             overlay = if (snapshot.overlay == Overlay.GUIDE) Overlay.NONE else Overlay.GUIDE,
             favoritesOnly = favoritesActive,
             guideChannelIndex = currentIndex,
-            guideProgramIndex = guideProgramIndexAt(channels, currentIndex, Instant.now()),
-            guideAnchor = Instant.now(),
+            guideProgramIndex = guideProgramIndexAt(channels, currentIndex, now),
+            guideAnchor = now,
+            guideWindowStart = ProgramWindow.guideWindowStart(now, ZoneId.systemDefault()),
             error = null,
         )
     }

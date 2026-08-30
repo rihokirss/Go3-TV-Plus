@@ -415,8 +415,9 @@ private fun GuideOverlay(state: TvUiState) {
     val selectedPrograms = state.programsFor(selectedChannel?.id)
     val selectedProgram = selectedPrograms.getOrNull(state.guideProgramIndex)
     val anchor = state.guideAnchor ?: now
-    val windowStart = ProgramWindow.guideWindowStart(anchor, ZoneId.systemDefault())
-    val windowEnd = windowStart.plus(Duration.ofHours(4))
+    val windowStart = state.guideWindowStart
+        ?: ProgramWindow.guideWindowStart(anchor, ZoneId.systemDefault())
+    val windowEnd = windowStart.plus(ProgramWindow.GUIDE_WINDOW_DURATION)
     val visibleCount = 6
     val first = (state.guideChannelIndex - 2)
         .coerceIn(0, (guideChannels.size - visibleCount).coerceAtLeast(0))
@@ -458,9 +459,31 @@ private fun GuideOverlay(state: TvUiState) {
             Row(Modifier.fillMaxWidth().height(26.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("KANAL", color = Go3Colors.TextFaint, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(206.dp))
                 BoxWithConstraints(Modifier.weight(1f).fillMaxHeight()) {
-                    Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        repeat(5) { hour ->
-                            Text(formatTime(windowStart.plus(Duration.ofHours(hour.toLong()))), color = Go3Colors.TextHint, fontSize = 12.sp)
+                    val halfHourSlots = 8
+                    repeat(halfHourSlots + 1) { slot ->
+                        val slotTime = windowStart.plus(ProgramWindow.GUIDE_WINDOW_STEP.multipliedBy(slot.toLong()))
+                        val x = maxWidth * (slot.toFloat() / halfHourSlots)
+                        if (slotTime.atZone(ZoneId.systemDefault()).minute == 0) {
+                            val labelWidth = 48.dp
+                            Text(
+                                formatTime(slotTime),
+                                modifier = Modifier
+                                    .width(labelWidth)
+                                    .offset(x = (x - labelWidth / 2).coerceIn(0.dp, (maxWidth - labelWidth).coerceAtLeast(0.dp)))
+                                    .align(Alignment.CenterStart),
+                                color = Go3Colors.TextHint,
+                                fontSize = 12.sp,
+                                textAlign = TextAlign.Center,
+                            )
+                        } else {
+                            Box(
+                                Modifier
+                                    .offset(x = (x - 0.5.dp).coerceIn(0.dp, (maxWidth - 1.dp).coerceAtLeast(0.dp)))
+                                    .align(Alignment.CenterStart)
+                                    .width(1.dp)
+                                    .height(6.dp)
+                                    .background(Go3Colors.TextFaint.copy(alpha = 0.7f)),
+                            )
                         }
                     }
                     if (!now.isBefore(windowStart) && now.isBefore(windowEnd)) {

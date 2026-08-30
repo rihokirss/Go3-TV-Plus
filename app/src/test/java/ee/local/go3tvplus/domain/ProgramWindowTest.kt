@@ -41,6 +41,34 @@ class ProgramWindowTest {
         assertEquals(0, start.second)
     }
 
+    @Test fun guideWindowStaysStillWhileNextProgramIsVisible() {
+        val zone = ZoneId.of("Europe/Tallinn")
+        val windowStart = ZonedDateTime.of(2026, 8, 30, 19, 0, 0, 0, zone).toInstant()
+        val visibleProgram = program(
+            ZonedDateTime.of(2026, 8, 30, 21, 0, 0, 0, zone).toInstant(),
+            ZonedDateTime.of(2026, 8, 30, 22, 0, 0, 0, zone).toInstant(),
+        )
+
+        assertEquals(
+            windowStart,
+            ProgramWindow.guideWindowStartKeepingVisible(windowStart, visibleProgram),
+        )
+    }
+
+    @Test fun guideWindowMovesInHalfHourStepsAfterSelectedProgramLeavesVisibleRange() {
+        val zone = ZoneId.of("Europe/Tallinn")
+        val windowStart = ZonedDateTime.of(2026, 8, 30, 19, 0, 0, 0, zone).toInstant()
+        val outsideProgram = program(
+            ZonedDateTime.of(2026, 8, 30, 23, 0, 0, 0, zone).toInstant(),
+            ZonedDateTime.of(2026, 8, 31, 0, 0, 0, 0, zone).toInstant(),
+        )
+
+        val movedStart = ProgramWindow.guideWindowStartKeepingVisible(windowStart, outsideProgram)
+
+        assertEquals(19, movedStart.atZone(zone).hour)
+        assertEquals(30, movedStart.atZone(zone).minute)
+    }
+
     private fun program(start: Instant, end: Instant) = Program(
         id = "p",
         channelId = "c",
