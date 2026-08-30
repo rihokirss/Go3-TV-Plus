@@ -1,0 +1,10 @@
+<resources>
+    <style name="Theme.Go3Redirect" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#62A8FF</item>
+        <item name="android:navigationBarColor">#07162A</item>
+        <item name="android:windowBackground">#07162A</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+</resources>

@@ -16,4 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Go3TvPlus"
 include(":app")
-
+include(":tclredirect")

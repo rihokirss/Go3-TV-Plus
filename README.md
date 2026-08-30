@@ -96,6 +96,17 @@ Parooli rakendusse ei sisestata ega salvestata. Tokenid hoitakse Android Keystor
 | `BACK` | Sulge esmalt aktiivne kiht, seejärel rakendus |
 | `HOME` | Peata taasesitus ja sulge Go3 serveriseanss |
 
+## TCL-i Prime Video nupp
+
+Testitud TCL Google TV jaoks on repos eraldi valikuline `tclredirect` helper.
+See võimaldab füüsilise Prime Video nupu suunata Go3 TV+ rakendusse ja taastab
+suunamise ka pärast teleri täielikku restarti. Helper ei kuulu põhi-APK-sse,
+sest lahendus sõltub konkreetsest TCL-i puldist ning eeldab, et võrgu-ADB jääb
+teleris lubatuks.
+
+Paigaldamine, taastamine, turvapiirangud ja tehniline taust on kirjas
+[TCL Prime-nupu märkmetes](docs/tcl-prime-button-redirect.md).
+
 ## Uuendamine
 
 Laadi uuem APK Releases-lehelt ja paigalda see vana peale. Rakendus asendatakse ning konto sidumine, lemmikud, kanalinumbrid ja muud eelistused jäävad alles, kui paketitunnus ja allkiri ühtivad.
