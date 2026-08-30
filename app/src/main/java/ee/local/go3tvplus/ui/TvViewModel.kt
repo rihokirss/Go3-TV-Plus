@@ -23,6 +23,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,6 +33,9 @@ import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Duration
@@ -101,6 +105,7 @@ class TvViewModel(
     private var guideOkJob: Job? = null
     private var guideLongPressHandled = false
     private var railJob: Job? = null
+    private var channelTuneJob: Job? = null
     private var tuneJob: Job? = null
     private var prolongJob: Job? = null
     private var seekUiJob: Job? = null
@@ -114,9 +119,11 @@ class TvViewModel(
     private var retryCount = 0
     private var wasBackgrounded = false
     private var manuallyTimeShifted = false
+    private var tuneGeneration = 0L
     private var scheduledProgramActions: Map<String, ScheduledProgramAction> = emptyMap()
     private val shownReminderIds = mutableSetOf<String>()
     private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val tuneMutex = Mutex()
 
     init {
         tvPlayer.setListener(this)
@@ -844,7 +851,15 @@ class TvViewModel(
         else channels.indexOfFirst { it.id == snapshot.currentChannelId }.coerceAtLeast(0)
         val next = (base + delta).floorMod(channels.size)
         mutableState.value = mutableState.value.copy(overlay = Overlay.CHANNEL_RAIL, railIndex = next)
-        if (immediate) tune(channels[next])
+        if (immediate) {
+            channelTuneJob?.cancel()
+            channelTuneJob = viewModelScope.launch {
+                delay(CHANNEL_TUNE_DEBOUNCE_MS)
+                channelTuneJob = null
+                val selected = railChannels(mutableState.value).getOrNull(mutableState.value.railIndex)
+                if (selected != null) tune(selected)
+            }
+        }
         scheduleRailClose()
     }
 
@@ -1146,8 +1161,11 @@ class TvViewModel(
         resetPlaybackRetry: Boolean = true,
     ) {
         val profileId = mutableState.value.selectedProfileId ?: return
+        channelTuneJob?.cancel()
+        channelTuneJob = null
         playbackRetryJob?.cancel()
         playbackRetryJob = null
+        val generation = ++tuneGeneration
         tuneJob?.cancel()
         tuneJob = viewModelScope.launch {
             if (resetPlaybackRetry) retryCount = 0
@@ -1158,31 +1176,53 @@ class TvViewModel(
                 error = null,
             )
             if (!keepPreviousVideo) tvPlayer.stopAndClear()
+            var acquiredTicket: PlaybackTicket? = null
+            var adoptedTicket = false
             try {
-                manuallyTimeShifted = false
-                val previousSessionId = activeTicket?.playbackSessionId
-                activeTicket = null
-                repository.closePlayback(previousSessionId)
-                val ticket = requestLiveTicket(profileId, channel.id, wakeRecovery)
-                activeTicket = ticket
-                scheduleProlong(ticket)
-                pendingChannelId = channel.id
-                tvPlayer.play(
-                    ticket = ticket,
-                    channelName = channel.name,
-                    programTitle = nowProgram(channel.id)?.title,
-                )
-                mutableState.value = mutableState.value.copy(currentChannelId = channel.id, catchupProgram = null)
+                tuneMutex.withLock {
+                    ensureActive()
+                    manuallyTimeShifted = false
+                    prolongJob?.cancel()
+                    val previousSessionId = activeTicket?.playbackSessionId
+                    activeTicket = null
+                    withContext(NonCancellable) { repository.closePlayback(previousSessionId) }
+                    ensureActive()
+                    withContext(NonCancellable) {
+                        acquiredTicket = requestLiveTicket(profileId, channel.id, wakeRecovery)
+                    }
+                    if (generation != tuneGeneration) return@withLock
+                    ensureActive()
+                    val ticket = acquiredTicket ?: return@withLock
+                    activeTicket = ticket
+                    scheduleProlong(ticket)
+                    pendingChannelId = channel.id
+                    tvPlayer.play(
+                        ticket = ticket,
+                        channelName = channel.name,
+                        programTitle = nowProgram(channel.id)?.title,
+                    )
+                    mutableState.value = mutableState.value.copy(currentChannelId = channel.id, catchupProgram = null)
+                    adoptedTicket = true
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                if (error is Go3Failure.NotEntitled) {
-                    hideUnavailableChannel(profileId, channel)
-                } else {
-                    showError(error)
+                if (generation == tuneGeneration) {
+                    if (error is Go3Failure.NotEntitled) {
+                        hideUnavailableChannel(profileId, channel)
+                    } else {
+                        showError(error)
+                    }
                 }
             } finally {
-                mutableState.value = mutableState.value.copy(loading = false)
+                if (!adoptedTicket) {
+                    val abandonedSessionId = acquiredTicket?.playbackSessionId
+                    if (activeTicket === acquiredTicket) activeTicket = null
+                    withContext(NonCancellable) { repository.closePlayback(abandonedSessionId) }
+                }
+                if (generation == tuneGeneration) {
+                    mutableState.value = mutableState.value.copy(loading = false)
+                }
             }
         }
     }
@@ -1368,6 +1408,9 @@ class TvViewModel(
         wasBackgrounded = true
         mutableState.value = mutableState.value.copy(overlay = Overlay.NONE, numberInput = "")
         tuneJob?.cancel()
+        channelTuneJob?.cancel()
+        channelTuneJob = null
+        tuneGeneration++
         prolongJob?.cancel()
         seekUiJob?.cancel()
         seekCloseJob?.cancel()
@@ -1459,6 +1502,7 @@ class TvViewModel(
 
 private const val STARTUP_REFRESH_DEFER_MS = 5_000L
 private const val CHANNEL_RAIL_TIMEOUT_MS = 5_000L
+private const val CHANNEL_TUNE_DEBOUNCE_MS = 180L
 private const val SEEK_OVERLAY_TIMEOUT_MS = 10_000L
 private const val PROGRAM_REMINDER_LEAD_MS = 60_000L
 private const val PROGRAM_ACTION_GRACE_MS = 5 * 60_000L
