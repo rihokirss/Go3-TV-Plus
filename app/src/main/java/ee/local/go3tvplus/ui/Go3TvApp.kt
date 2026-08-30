@@ -280,7 +280,12 @@ private fun SeekOverlay(state: TvUiState) {
     // currently airing live on the channel.
     val watching = state.catchupProgram
     val channel = state.channels.firstOrNull { it.id == (watching?.channelId ?: state.currentChannelId) }
-    val program = watching ?: state.programsFor(state.currentChannelId).nowProgram()
+    val playbackInstant = state.seekLiveOffsetMs
+        ?.takeIf { state.seekIsLive }
+        ?.let { Instant.now().minusMillis(it) }
+        ?: Instant.now()
+    val program = watching ?: state.programsFor(state.currentChannelId)
+        .firstOrNull { ProgramWindow.isCurrent(it, playbackInstant) }
     val progress = if (state.seekDurationMs > 0L) {
         (state.seekPositionMs.toFloat() / state.seekDurationMs.toFloat()).coerceIn(0f, 1f)
     } else 0f
@@ -318,6 +323,23 @@ private fun SeekOverlay(state: TvUiState) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            program?.let {
+                Text(
+                    "${formatTime(it.startsAt)}–${formatTime(it.endsAt)}  •  ${formatProgramDuration(ProgramWindow.durationMinutes(it))}",
+                    color = Go3Colors.Cyan,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                if (!it.description.isNullOrBlank()) {
+                    Text(
+                        it.description,
+                        color = Go3Colors.TextSecondary,
+                        fontSize = 14.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
             Box(Modifier.fillMaxWidth().height(8.dp).background(Go3Colors.ProgressTrack, RoundedCornerShape(Go3Radii.XS))) {
                 if (progress > 0f) {
                     Box(
@@ -983,4 +1005,15 @@ private fun formatPlaybackDuration(milliseconds: Long): String {
     val seconds = totalSeconds % 60L
     return if (hours > 0L) "%d:%02d:%02d".format(hours, minutes, seconds)
     else "%02d:%02d".format(minutes, seconds)
+}
+
+private fun formatProgramDuration(totalMinutes: Long): String {
+    val minutes = totalMinutes.coerceAtLeast(0L)
+    val hours = minutes / 60L
+    val remainingMinutes = minutes % 60L
+    return when {
+        hours == 0L -> "$remainingMinutes min"
+        remainingMinutes == 0L -> "$hours h"
+        else -> "$hours h $remainingMinutes min"
+    }
 }
