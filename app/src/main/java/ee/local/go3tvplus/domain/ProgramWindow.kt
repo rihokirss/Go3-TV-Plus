@@ -40,4 +40,21 @@ object ProgramWindow {
 
     val GUIDE_WINDOW_DURATION: Duration = Duration.ofHours(4)
     val GUIDE_WINDOW_STEP: Duration = Duration.ofMinutes(30)
+
+    fun boundaryFractions(
+        programs: List<Program>,
+        timelineStart: Instant,
+        timelineDurationMs: Long,
+    ): List<Float> {
+        if (timelineDurationMs <= 0L) return emptyList()
+        val timelineEnd = timelineStart.plusMillis(timelineDurationMs)
+        return programs.asSequence()
+            .map(Program::startsAt)
+            .distinct()
+            .filter { it.isAfter(timelineStart) && it.isBefore(timelineEnd) }
+            .map { boundary ->
+                Duration.between(timelineStart, boundary).toMillis().toFloat() / timelineDurationMs.toFloat()
+            }
+            .toList()
+    }
 }

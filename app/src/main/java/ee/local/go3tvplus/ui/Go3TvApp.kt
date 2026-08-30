@@ -286,6 +286,16 @@ private fun SeekOverlay(state: TvUiState) {
         ?: Instant.now()
     val program = watching ?: state.programsFor(state.currentChannelId)
         .firstOrNull { ProgramWindow.isCurrent(it, playbackInstant) }
+    val timelineStart = if (watching != null && !state.seekIsLive) {
+        watching.startsAt
+    } else {
+        playbackInstant.minusMillis(state.seekPositionMs.coerceAtLeast(0L))
+    }
+    val programBoundaries = ProgramWindow.boundaryFractions(
+        state.programsFor(channel?.id),
+        timelineStart,
+        state.seekDurationMs,
+    )
     val progress = if (state.seekDurationMs > 0L) {
         (state.seekPositionMs.toFloat() / state.seekDurationMs.toFloat()).coerceIn(0f, 1f)
     } else 0f
@@ -340,11 +350,29 @@ private fun SeekOverlay(state: TvUiState) {
                     )
                 }
             }
-            Box(Modifier.fillMaxWidth().height(8.dp).background(Go3Colors.ProgressTrack, RoundedCornerShape(Go3Radii.XS))) {
-                if (progress > 0f) {
+            BoxWithConstraints(Modifier.fillMaxWidth().height(14.dp)) {
+                Box(
+                    Modifier.fillMaxWidth().height(8.dp).align(Alignment.Center)
+                        .background(Go3Colors.ProgressTrack, RoundedCornerShape(Go3Radii.XS)),
+                ) {
+                    if (progress > 0f) {
+                        Box(
+                            Modifier.fillMaxWidth(progress).fillMaxHeight()
+                                .background(Go3Brushes.progressFill, RoundedCornerShape(Go3Radii.XS)),
+                        )
+                    }
+                }
+                programBoundaries.forEach { fraction ->
                     Box(
-                        Modifier.fillMaxWidth(progress).fillMaxHeight()
-                            .background(Go3Brushes.progressFill, RoundedCornerShape(Go3Radii.XS)),
+                        Modifier
+                            .offset(
+                                x = (maxWidth * fraction - 1.dp)
+                                    .coerceIn(0.dp, (maxWidth - 2.dp).coerceAtLeast(0.dp)),
+                            )
+                            .align(Alignment.CenterStart)
+                            .width(2.dp)
+                            .height(14.dp)
+                            .background(Color.White.copy(alpha = 0.82f), RoundedCornerShape(1.dp)),
                     )
                 }
             }

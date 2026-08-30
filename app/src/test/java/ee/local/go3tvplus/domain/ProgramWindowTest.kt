@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -67,6 +68,23 @@ class ProgramWindowTest {
 
         assertEquals(19, movedStart.atZone(zone).hour)
         assertEquals(30, movedStart.atZone(zone).minute)
+    }
+
+    @Test fun programmeBoundariesArePositionedInsidePlaybackTimeline() {
+        val timelineStart = Instant.parse("2026-08-30T16:00:00Z")
+        val programs = listOf(
+            program(timelineStart, timelineStart.plusSeconds(3_600)),
+            program(timelineStart.plusSeconds(3_600), timelineStart.plusSeconds(7_200)),
+            program(timelineStart.plusSeconds(7_200), timelineStart.plusSeconds(10_800)),
+        )
+
+        val fractions = ProgramWindow.boundaryFractions(
+            programs,
+            timelineStart,
+            Duration.ofHours(4).toMillis(),
+        )
+
+        assertEquals(listOf(0.25f, 0.5f), fractions)
     }
 
     private fun program(start: Instant, end: Instant) = Program(
