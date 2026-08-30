@@ -287,6 +287,8 @@ private fun PlayerScreen(state: TvUiState, player: Player) {
                 color = Color.White,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
         }
 

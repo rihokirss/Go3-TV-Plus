@@ -5,8 +5,17 @@ import java.time.Instant
 import java.time.ZoneId
 
 object ProgramWindow {
+    enum class GuideSelectionAction { TUNE_LIVE, PLAY_CATCHUP, SHOW_INFO }
+
     fun isCurrent(program: Program, at: Instant): Boolean =
         !at.isBefore(program.startsAt) && at.isBefore(program.endsAt)
+
+    fun guideSelectionAction(program: Program?, at: Instant): GuideSelectionAction = when {
+        program == null -> GuideSelectionAction.TUNE_LIVE
+        program.startsAt.isAfter(at) -> GuideSelectionAction.SHOW_INFO
+        !program.endsAt.isAfter(at) -> GuideSelectionAction.PLAY_CATCHUP
+        else -> GuideSelectionAction.TUNE_LIVE
+    }
 
     fun overlaps(program: Program, from: Instant, until: Instant): Boolean =
         program.endsAt.isAfter(from) && program.startsAt.isBefore(until)

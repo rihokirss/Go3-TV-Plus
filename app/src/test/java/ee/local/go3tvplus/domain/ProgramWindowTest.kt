@@ -17,6 +17,32 @@ class ProgramWindowTest {
         assertFalse(ProgramWindow.isCurrent(program, program.endsAt))
     }
 
+    @Test fun guideSelectionSeparatesFutureLiveAndCatchup() {
+        val start = Instant.parse("2026-08-29T10:00:00Z")
+        val item = program(start, start.plusSeconds(3600))
+
+        assertEquals(
+            ProgramWindow.GuideSelectionAction.SHOW_INFO,
+            ProgramWindow.guideSelectionAction(item, start.minusMillis(1)),
+        )
+        assertEquals(
+            ProgramWindow.GuideSelectionAction.TUNE_LIVE,
+            ProgramWindow.guideSelectionAction(item, start),
+        )
+        assertEquals(
+            ProgramWindow.GuideSelectionAction.TUNE_LIVE,
+            ProgramWindow.guideSelectionAction(item, item.endsAt.minusMillis(1)),
+        )
+        assertEquals(
+            ProgramWindow.GuideSelectionAction.PLAY_CATCHUP,
+            ProgramWindow.guideSelectionAction(item, item.endsAt),
+        )
+        assertEquals(
+            ProgramWindow.GuideSelectionAction.TUNE_LIVE,
+            ProgramWindow.guideSelectionAction(null, start),
+        )
+    }
+
     @Test fun durationUsesInstantsAcrossTallinnDstJump() {
         val zone = ZoneId.of("Europe/Tallinn")
         val start = ZonedDateTime.of(2026, 3, 29, 2, 30, 0, 0, zone).toInstant()

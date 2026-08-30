@@ -750,12 +750,20 @@ class TvViewModel(
         val snapshot = mutableState.value
         val program = programsForGuideChannel(snapshot).getOrNull(snapshot.guideProgramIndex)
         val channel = guideChannels(snapshot).getOrNull(snapshot.guideChannelIndex)
-        if (program != null && program.endsAt.isBefore(Instant.now())) playCatchup(program)
-        else if (channel != null && (program == null || program.startsAt.isBefore(Instant.now()))) {
-            mutableState.value = snapshot.copy(overlay = Overlay.NONE)
-            tune(channel)
+        when (ProgramWindow.guideSelectionAction(program, Instant.now())) {
+            ProgramWindow.GuideSelectionAction.PLAY_CATCHUP -> program?.let(::playCatchup)
+            ProgramWindow.GuideSelectionAction.TUNE_LIVE -> if (channel != null) {
+                mutableState.value = snapshot.copy(overlay = Overlay.NONE, error = null, errorActionIndex = 0)
+                tune(channel)
+            }
+            ProgramWindow.GuideSelectionAction.SHOW_INFO -> if (program != null) {
+                // A future programme is informational, not a playback failure.
+                // Keep the guide and its description visible instead of showing
+                // the global retry/error banner.
+                mutableState.value = snapshot.copy(error = null, errorActionIndex = 0)
+                showNotice(program.description?.takeIf(String::isNotBlank) ?: "${program.title} pole veel alanud")
+            }
         }
-        else if (program != null) mutableState.value = snapshot.copy(error = program.description ?: "Tulevane saade")
     }
 
     private fun programsForGuideChannel(snapshot: TvUiState): List<Program> {
