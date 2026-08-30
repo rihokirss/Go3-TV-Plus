@@ -179,6 +179,20 @@ class TvViewModel(
                         .mapValues { (_, channelPrograms) -> channelPrograms.sortedBy(Program::startsAt) }
                 }
                 mutableState.value = mutableState.value.copy(programsByChannel = indexedPrograms)
+                // If the guide is open while data lands, the stored programme index
+                // may point into a differently sized list (e.g. opened before the
+                // cache was indexed). Re-derive it from the time anchor so the
+                // selection stays on the right programme and ←/→ keep working.
+                val snapshot = mutableState.value
+                if (snapshot.overlay == Overlay.GUIDE) {
+                    mutableState.value = snapshot.copy(
+                        guideProgramIndex = guideProgramIndexAt(
+                            guideChannels(snapshot),
+                            snapshot.guideChannelIndex,
+                            snapshot.guideAnchor ?: Instant.now(),
+                        ),
+                    )
+                }
             }
         }
     }
