@@ -30,6 +30,17 @@ class ProgramWindowTest {
         assertTrue(ProgramWindow.overlaps(program, start.plusSeconds(1800), program.endsAt.plusSeconds(1)))
     }
 
+    @Test fun guideWindowStartsOnAFullLocalHourWithContextBeforeAnchor() {
+        val zone = ZoneId.of("Europe/Tallinn")
+        val anchor = ZonedDateTime.of(2026, 8, 30, 20, 18, 0, 0, zone).toInstant()
+
+        val start = ProgramWindow.guideWindowStart(anchor, zone).atZone(zone)
+
+        assertEquals(19, start.hour)
+        assertEquals(0, start.minute)
+        assertEquals(0, start.second)
+    }
+
     private fun program(start: Instant, end: Instant) = Program(
         id = "p",
         channelId = "c",

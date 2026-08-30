@@ -415,7 +415,7 @@ private fun GuideOverlay(state: TvUiState) {
     val selectedPrograms = state.programsFor(selectedChannel?.id)
     val selectedProgram = selectedPrograms.getOrNull(state.guideProgramIndex)
     val anchor = state.guideAnchor ?: now
-    val windowStart = anchor.minus(Duration.ofMinutes(30))
+    val windowStart = ProgramWindow.guideWindowStart(anchor, ZoneId.systemDefault())
     val windowEnd = windowStart.plus(Duration.ofHours(4))
     val visibleCount = 6
     val first = (state.guideChannelIndex - 2)
