@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -37,6 +38,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Color
@@ -52,6 +55,7 @@ import androidx.media3.common.Player
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.tv.material3.Button
+import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import ee.local.go3tvplus.domain.Channel
@@ -133,19 +137,70 @@ private fun PairingScreen(auth: DeviceAuthState, onStart: () -> Unit) {
 
 @Composable
 private fun ProfileScreen(profiles: List<Profile>, onSelect: (Profile) -> Unit) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(30.dp)) {
-            Text("Kes vaatab?", color = Color.White, fontSize = 40.sp, fontWeight = FontWeight.Bold)
+    val firstProfileFocus = remember { FocusRequester() }
+    LaunchedEffect(profiles) {
+        if (profiles.isNotEmpty()) firstProfileFocus.requestFocus()
+    }
+    Box(
+        Modifier.fillMaxSize().background(Go3Brushes.fullscreenRadial),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            Text("GO3 PROFIIL", color = Go3Colors.Cyan, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text("Kes vaatab?", color = Color.White, fontSize = 42.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "Vali vaatamisprofiil",
+                color = Go3Colors.TextHint,
+                fontSize = 16.sp,
+            )
             if (profiles.isEmpty()) {
                 Text("Laadin profiile…", color = Go3Colors.TextSecondary, fontSize = 20.sp)
             } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    profiles.forEach { profile ->
-                        Button(onClick = { onSelect(profile) }, modifier = Modifier.width(210.dp).height(86.dp)) {
-                            Text(profile.name, fontSize = 20.sp)
+                Row(
+                    modifier = Modifier.padding(top = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(20.dp),
+                ) {
+                    profiles.forEachIndexed { index, profile ->
+                        Button(
+                            onClick = { onSelect(profile) },
+                            modifier = Modifier.width(280.dp).height(104.dp)
+                                .then(if (index == 0) Modifier.focusRequester(firstProfileFocus) else Modifier),
+                            colors = ButtonDefaults.colors(
+                                containerColor = Go3Colors.RowIdle,
+                                contentColor = Go3Colors.TextSecondary,
+                                focusedContainerColor = Go3Colors.Accent,
+                                focusedContentColor = Color.White,
+                            ),
+                            shape = ButtonDefaults.shape(
+                                shape = RoundedCornerShape(Go3Radii.L),
+                                focusedShape = RoundedCornerShape(Go3Radii.L),
+                            ),
+                            scale = ButtonDefaults.scale(focusedScale = 1.04f),
+                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            ) {
+                                ProfileAvatar(profile, selected = true, size = 54.dp)
+                                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Text(profile.name, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        if (profile.isKids) "LASTE PROFIIL" else "VAATAMISPROFIIL",
+                                        color = Go3Colors.TextSecondary,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
+                KeyHintRow("◀▶" to "vali", "OK" to "kinnita", modifier = Modifier.padding(top = 10.dp))
             }
         }
     }
@@ -919,20 +974,57 @@ private fun AppSettingsOverlay(state: TvUiState) {
 @Composable
 private fun ProfileSettingsOverlay(state: TvUiState) {
     CenteredMenuPanel {
-        OverlayHeader("GO3 PROFIIL", "Vali vaatamisprofiil", "Profiili vahetamine värskendab kanalipaketti")
-        Spacer(Modifier.height(6.dp))
+        OverlayHeader(
+            "GO3 PROFIIL",
+            "Kes vaatab?",
+            "Profiili vahetamine värskendab sinu kanalipaketti",
+        )
+        Spacer(Modifier.height(12.dp))
         if (state.profiles.isEmpty()) {
             Text("Laadin Go3 profiile…", color = Go3Colors.TextSecondary, fontSize = 18.sp)
         }
         state.profiles.forEachIndexed { index, profile ->
             val selected = index == state.profileSettingsIndex
             val active = profile.id == state.selectedProfileId
-            SettingsRow(selected, verticalPadding = 16.dp) {
-                Text(profile.name, color = Color.White, fontSize = 21.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f))
+            SettingsRow(selected, verticalPadding = 12.dp) {
+                ProfileAvatar(profile, selected, size = 48.dp)
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        profile.name,
+                        color = Color.White,
+                        fontSize = 21.sp,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                    )
+                    Text(
+                        if (profile.isKids) "Laste profiil" else "Vaatamisprofiil",
+                        color = if (selected) Color.White.copy(alpha = 0.78f) else Go3Colors.TextSecondary,
+                        fontSize = 13.sp,
+                    )
+                }
                 if (active) RowBadge("PRAEGUNE", selected)
+                else Text("›", color = if (selected) Color.White else Go3Colors.TextFaint, fontSize = 30.sp)
             }
         }
         KeyHintRow("▲▼" to "vali", "OK" to "kinnita", "BACK" to "sulge", modifier = Modifier.align(Alignment.End))
+    }
+}
+
+@Composable
+private fun ProfileAvatar(profile: Profile, selected: Boolean, size: androidx.compose.ui.unit.Dp) {
+    Box(
+        Modifier.size(size).background(
+            if (selected) Color.White.copy(alpha = 0.16f) else Go3Colors.ChipIdle,
+            RoundedCornerShape(Go3Radii.M),
+        ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            profile.name.trim().firstOrNull()?.uppercase() ?: "•",
+            color = if (selected) Color.White else Go3Colors.Cyan,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 
