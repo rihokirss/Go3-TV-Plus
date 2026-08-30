@@ -15,12 +15,13 @@ object ProgramWindow {
         Duration.between(program.startsAt, program.endsAt).toMinutes().coerceAtLeast(0)
 
     fun guideWindowStart(anchor: Instant, zoneId: ZoneId): Instant =
-        anchor.minus(Duration.ofMinutes(30))
-            .atZone(zoneId)
-            .withMinute(0)
-            .withSecond(0)
-            .withNano(0)
-            .toInstant()
+        anchor.minus(GUIDE_WINDOW_STEP).atZone(zoneId).let { localAnchor ->
+            localAnchor
+                .withMinute(if (localAnchor.minute < 30) 0 else 30)
+                .withSecond(0)
+                .withNano(0)
+                .toInstant()
+        }
 
     fun guideWindowStartKeepingVisible(
         currentWindowStart: Instant,

@@ -31,15 +31,25 @@ class ProgramWindowTest {
         assertTrue(ProgramWindow.overlaps(program, start.plusSeconds(1800), program.endsAt.plusSeconds(1)))
     }
 
-    @Test fun guideWindowStartsOnAFullLocalHourWithContextBeforeAnchor() {
+    @Test fun guideWindowKeepsHalfAnHourOfContextAndRoundsDownToHalfHour() {
         val zone = ZoneId.of("Europe/Tallinn")
         val anchor = ZonedDateTime.of(2026, 8, 30, 20, 18, 0, 0, zone).toInstant()
 
         val start = ProgramWindow.guideWindowStart(anchor, zone).atZone(zone)
 
         assertEquals(19, start.hour)
-        assertEquals(0, start.minute)
+        assertEquals(30, start.minute)
         assertEquals(0, start.second)
+
+        val laterAnchor = ZonedDateTime.of(2026, 8, 30, 20, 47, 0, 0, zone).toInstant()
+        val laterStart = ProgramWindow.guideWindowStart(laterAnchor, zone).atZone(zone)
+        assertEquals(20, laterStart.hour)
+        assertEquals(0, laterStart.minute)
+
+        val userExample = ZonedDateTime.of(2026, 8, 30, 15, 23, 0, 0, zone).toInstant()
+        val exampleStart = ProgramWindow.guideWindowStart(userExample, zone).atZone(zone)
+        assertEquals(14, exampleStart.hour)
+        assertEquals(30, exampleStart.minute)
     }
 
     @Test fun guideWindowStaysStillWhileNextProgramIsVisible() {

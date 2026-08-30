@@ -323,12 +323,15 @@ private fun SeekOverlay(state: TvUiState) {
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f),
                 )
-                Text(
-                    if (state.seekPlaying) "▶" else "Ⅱ",
-                    color = if (state.seekPlaying) Go3Colors.Cyan else Color.White,
-                    fontSize = 21.sp,
-                    fontWeight = FontWeight.Bold,
-                )
+                Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        if (state.seekPlaying) "▶" else "Ⅱ",
+                        color = if (state.seekPlaying) Go3Colors.Cyan else Color.White,
+                        fontSize = 20.sp,
+                        lineHeight = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
             }
             Text(
                 program?.title ?: "Ajanihe",
