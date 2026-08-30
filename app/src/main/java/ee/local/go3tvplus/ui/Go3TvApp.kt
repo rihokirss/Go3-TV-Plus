@@ -39,16 +39,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -71,24 +67,16 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-private val Accent = Color(0xFF178BFF)
-private val Cyan = Color(0xFF32C7FF)
-private val Panel = Color(0xF2071221)
-private val SoftPanel = Color(0xE80B1B30)
-private val SelectedRow = Color(0xD9193C67)
-private val ProgramBlue = Color(0xE31D3550)
-private val CurrentProgramBlue = Color(0xEB164E78)
-
 @Composable
 fun Go3TvApp(viewModel: TvViewModel, player: Player) {
     val state by viewModel.state.collectAsState()
     MaterialTheme {
-        Box(Modifier.fillMaxSize().background(Color(0xFF050B14))) {
+        Box(Modifier.fillMaxSize().background(Go3Colors.AppBackground)) {
             when {
                 state.auth != DeviceAuthState.Approved -> PairingScreen(state.auth, viewModel::startPairing)
                 state.selectedProfileId == null && state.profiles.isEmpty() -> StartupScreen()
                 state.selectedProfileId == null -> ProfileScreen(state.profiles, viewModel::selectProfile)
-                else -> PlayerScreen(state, player, viewModel::retry, viewModel::clearError)
+                else -> PlayerScreen(state, player)
             }
             if (state.isDemo) DemoBadge()
         }
@@ -97,29 +85,22 @@ fun Go3TvApp(viewModel: TvViewModel, player: Player) {
 
 @Composable
 private fun StartupScreen() {
-    Box(
-        Modifier.fillMaxSize().background(
-            Brush.radialGradient(listOf(Color(0xFF10365B), Color(0xFF050B14))),
-        ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text("Go3 TV+", color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Bold)
-    }
+    // Same backdrop as the player's startup state, so the cold-start splash
+    // transitions into playback without a layout jump.
+    PlaybackStartupBackdrop(loading = false)
 }
 
 @Composable
 private fun PairingScreen(auth: DeviceAuthState, onStart: () -> Unit) {
     Box(
-        Modifier.fillMaxSize().background(
-            Brush.radialGradient(listOf(Color(0xFF10365B), Color(0xFF050B14))),
-        ),
+        Modifier.fillMaxSize().background(Go3Brushes.fullscreenRadial),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Text("Go3 TV+", color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Bold)
             when (auth) {
                 DeviceAuthState.Idle -> {
-                    Text("Seo oma Go3 konto telefoniga", color = Color.LightGray, fontSize = 22.sp)
+                    Text("Seo oma Go3 konto telefoniga", color = Go3Colors.TextSecondary, fontSize = 22.sp)
                     Button(onClick = onStart) { Text("Alusta sidumist") }
                 }
                 DeviceAuthState.RequestingCode -> Text("Loon sidumiskoodi…", color = Color.White, fontSize = 22.sp)
@@ -129,10 +110,10 @@ private fun PairingScreen(auth: DeviceAuthState, onStart: () -> Unit) {
                         Image(qr, "Go3 sidumise QR-kood", Modifier.size(250.dp).background(Color.White).padding(8.dp))
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("Skänni QR-kood telefoniga", color = Color.White, fontSize = 25.sp)
-                            Text("või ava", color = Color.Gray, fontSize = 18.sp)
-                            Text(auth.verificationUrl, color = Color.LightGray, fontSize = 18.sp)
-                            Text(auth.deviceCode, color = Accent, fontSize = 48.sp, fontWeight = FontWeight.Bold)
-                            Text("Ootan telefonis kinnitamist…", color = Color.LightGray, fontSize = 17.sp)
+                            Text("või ava", color = Go3Colors.TextFaint, fontSize = 18.sp)
+                            Text(auth.verificationUrl, color = Go3Colors.TextSecondary, fontSize = 18.sp)
+                            Text(auth.deviceCode, color = Go3Colors.Accent, fontSize = 48.sp, fontWeight = FontWeight.Bold)
+                            Text("Ootan telefonis kinnitamist…", color = Go3Colors.TextSecondary, fontSize = 17.sp)
                         }
                     }
                 }
@@ -142,7 +123,7 @@ private fun PairingScreen(auth: DeviceAuthState, onStart: () -> Unit) {
                     Button(onClick = onStart) { Text("Loo uus kood") }
                 }
                 is DeviceAuthState.Failed -> {
-                    Text(auth.message, color = Color(0xFFFFA0A5), fontSize = 20.sp)
+                    Text(auth.message, color = Go3Colors.ErrorText, fontSize = 20.sp)
                     Button(onClick = onStart) { Text("Proovi uuesti") }
                 }
             }
@@ -156,7 +137,7 @@ private fun ProfileScreen(profiles: List<Profile>, onSelect: (Profile) -> Unit) 
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(30.dp)) {
             Text("Kes vaatab?", color = Color.White, fontSize = 40.sp, fontWeight = FontWeight.Bold)
             if (profiles.isEmpty()) {
-                Text("Laadin profiile…", color = Color.LightGray, fontSize = 20.sp)
+                Text("Laadin profiile…", color = Go3Colors.TextSecondary, fontSize = 20.sp)
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                     profiles.forEach { profile ->
@@ -171,7 +152,7 @@ private fun ProfileScreen(profiles: List<Profile>, onSelect: (Profile) -> Unit) 
 }
 
 @Composable
-private fun PlayerScreen(state: TvUiState, player: Player, onRetry: () -> Unit, onDismissError: () -> Unit) {
+private fun PlayerScreen(state: TvUiState, player: Player) {
     Box(Modifier.fillMaxSize()) {
         AndroidView(
             modifier = Modifier.fillMaxSize().focusable(),
@@ -220,7 +201,7 @@ private fun PlayerScreen(state: TvUiState, player: Player, onRetry: () -> Unit, 
             Text(
                 state.numberInput,
                 modifier = Modifier.align(Alignment.TopEnd).padding(54.dp)
-                    .background(Panel, RoundedCornerShape(12.dp)).padding(horizontal = 28.dp, vertical = 16.dp),
+                    .background(Go3Colors.PanelDark, RoundedCornerShape(Go3Radii.M)).padding(horizontal = 28.dp, vertical = 16.dp),
                 color = Color.White,
                 fontSize = 52.sp,
                 fontWeight = FontWeight.Bold,
@@ -234,7 +215,7 @@ private fun PlayerScreen(state: TvUiState, player: Player, onRetry: () -> Unit, 
                 modifier = Modifier
                     .align(if (firstLoad) Alignment.Center else Alignment.TopEnd)
                     .padding(if (firstLoad) 0.dp else 32.dp)
-                    .background(SoftPanel, RoundedCornerShape(18.dp))
+                    .background(Go3Colors.SoftPanel, RoundedCornerShape(Go3Radii.L))
                     .padding(horizontal = if (firstLoad) 20.dp else 14.dp, vertical = if (firstLoad) 20.dp else 8.dp),
                 color = Color.White,
                 fontSize = if (firstLoad) 20.sp else 14.sp,
@@ -245,8 +226,8 @@ private fun PlayerScreen(state: TvUiState, player: Player, onRetry: () -> Unit, 
             Text(
                 notice,
                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 38.dp)
-                    .background(Color(0xF0193655), RoundedCornerShape(18.dp))
-                    .border(1.dp, Cyan.copy(alpha = 0.7f), RoundedCornerShape(18.dp))
+                    .background(Go3Colors.NoticeSurface, RoundedCornerShape(Go3Radii.L))
+                    .border(1.dp, Go3Colors.Cyan.copy(alpha = 0.7f), RoundedCornerShape(Go3Radii.L))
                     .padding(horizontal = 22.dp, vertical = 10.dp),
                 color = Color.White,
                 fontSize = 15.sp,
@@ -255,7 +236,7 @@ private fun PlayerScreen(state: TvUiState, player: Player, onRetry: () -> Unit, 
         }
 
         state.error?.let { message ->
-            ErrorBanner(message, state.errorActionIndex, onRetry, onDismissError)
+            ErrorBanner(message, state.errorActionIndex)
         }
     }
 }
@@ -263,7 +244,7 @@ private fun PlayerScreen(state: TvUiState, player: Player, onRetry: () -> Unit, 
 @Composable
 private fun PlaybackStartupBackdrop(loading: Boolean) {
     Box(
-        Modifier.fillMaxSize().background(Color(0xFF020712)),
+        Modifier.fillMaxSize().background(Go3Colors.AppBackground),
     ) {
         Image(
             painter = painterResource(R.drawable.splash_background_v1),
@@ -285,7 +266,7 @@ private fun PlaybackStartupBackdrop(loading: Boolean) {
             if (loading) {
                 Text(
                     "Ühendan kanalit…",
-                    color = Color(0xFFB8D8F2),
+                    color = Go3Colors.TextSecondary,
                     fontSize = 17.sp,
                 )
             }
@@ -295,8 +276,11 @@ private fun PlaybackStartupBackdrop(loading: Boolean) {
 
 @Composable
 private fun SeekOverlay(state: TvUiState) {
-    val channel = state.channels.firstOrNull { it.id == state.currentChannelId }
-    val program = state.programsFor(state.currentChannelId).nowProgram()
+    // While catchup plays, describe the catchup programme — not whatever is
+    // currently airing live on the channel.
+    val watching = state.catchupProgram
+    val channel = state.channels.firstOrNull { it.id == (watching?.channelId ?: state.currentChannelId) }
+    val program = watching ?: state.programsFor(state.currentChannelId).nowProgram()
     val progress = if (state.seekDurationMs > 0L) {
         (state.seekPositionMs.toFloat() / state.seekDurationMs.toFloat()).coerceIn(0f, 1f)
     } else 0f
@@ -310,20 +294,21 @@ private fun SeekOverlay(state: TvUiState) {
         Column(
             Modifier.fillMaxWidth(0.82f)
                 .padding(bottom = 42.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(Brush.verticalGradient(listOf(Color(0xED102C4A), Color(0xF2071221))))
+                .clip(RoundedCornerShape(Go3Radii.L))
+                .background(Go3Brushes.seekPanel)
                 .padding(horizontal = 26.dp, vertical = 18.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "${channel?.serverNumber ?: ""}  ${channel?.name.orEmpty()}",
-                    color = Cyan,
+                    "${channel?.serverNumber ?: ""}  ${channel?.name.orEmpty()}" +
+                        if (watching != null) "  •  ${formatDate(watching.startsAt)} ${formatTime(watching.startsAt)}" else "",
+                    color = Go3Colors.Cyan,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f),
                 )
-                Text(if (state.seekPlaying) "MÄNGIB" else "PAUS", color = Color(0xFFAFC4D8), fontSize = 13.sp)
+                Text(if (state.seekPlaying) "MÄNGIB" else "PAUS", color = Go3Colors.TextSecondary, fontSize = 13.sp)
             }
             Text(
                 program?.title ?: "Ajanihe",
@@ -333,24 +318,20 @@ private fun SeekOverlay(state: TvUiState) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Box(Modifier.fillMaxWidth().height(8.dp).background(Color(0xFF29445E), RoundedCornerShape(4.dp))) {
+            Box(Modifier.fillMaxWidth().height(8.dp).background(Go3Colors.ProgressTrack, RoundedCornerShape(Go3Radii.XS))) {
                 if (progress > 0f) {
                     Box(
                         Modifier.fillMaxWidth(progress).fillMaxHeight()
-                            .background(Brush.horizontalGradient(listOf(Accent, Cyan)), RoundedCornerShape(4.dp)),
+                            .background(Go3Brushes.progressFill, RoundedCornerShape(Go3Radii.XS)),
                     )
                 }
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(formatPlaybackDuration(state.seekPositionMs), color = Color.White, fontSize = 14.sp)
-                Text(
-                    "← 30 s     → 30 s     •     OK esita/paus     •     BACK sulge",
-                    color = Color(0xFF9FB5CA),
-                    fontSize = 13.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(liveLabel, color = if (liveLabel == "OTSE") Cyan else Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Row(Modifier.weight(1f), horizontalArrangement = Arrangement.Center) {
+                    KeyHintRow("◀▶" to "30 s", "OK" to "esita/paus", "BACK" to "sulge")
+                }
+                Text(liveLabel, color = if (liveLabel == "OTSE") Go3Colors.Cyan else Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -366,14 +347,14 @@ private fun ChannelRail(state: TvUiState) {
     val visible = railChannels.drop(first).take(6)
     Box(
         Modifier.fillMaxHeight().width(430.dp)
-            .background(Brush.horizontalGradient(listOf(Panel, Color.Transparent)))
+            .background(Go3Brushes.railPanel)
             .padding(horizontal = 32.dp, vertical = 38.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     if (state.favoritesOnly) "KANALID  •  LEMMIKUD" else "KANALID  •  KÕIK",
-                    color = Accent,
+                    color = Go3Colors.Accent,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f),
@@ -382,8 +363,8 @@ private fun ChannelRail(state: TvUiState) {
                     if (state.favoritesOnly) "←  ★ Lemmikud" else "←  ☆ Näita lemmikuid",
                     modifier = Modifier
                         .background(
-                            if (state.favoritesOnly) Accent else Color(0xD117304B),
-                            RoundedCornerShape(15.dp),
+                            if (state.favoritesOnly) Go3Colors.Accent else Go3Colors.ChipIdle,
+                            RoundedCornerShape(Go3Radii.L),
                         )
                         .padding(horizontal = 11.dp, vertical = 5.dp),
                     color = Color.White,
@@ -393,7 +374,7 @@ private fun ChannelRail(state: TvUiState) {
             }
             if (railChannels.isEmpty()) {
                 Text("Lemmikkanaleid pole veel valitud", color = Color.White, fontSize = 18.sp)
-                Text("Lisa lemmik täisekraanil ← seadistusest", color = Color.LightGray, fontSize = 14.sp)
+                Text("Lisa lemmik täisekraanil ← seadistusest", color = Go3Colors.TextSecondary, fontSize = 14.sp)
             }
             visible.forEachIndexed { offset, channel ->
                 val index = first + offset
@@ -401,19 +382,19 @@ private fun ChannelRail(state: TvUiState) {
                 val now = state.programsFor(channel.id).nowProgram()
                 Row(
                     Modifier.fillMaxWidth()
-                        .background(if (selected) Accent else Color.Transparent, RoundedCornerShape(8.dp))
+                        .background(if (selected) Go3Colors.Accent else Color.Transparent, RoundedCornerShape(Go3Radii.S))
                         .padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("${channel.serverNumber ?: index + 1}", color = if (selected) Color.White else Color.Gray, fontSize = 18.sp, modifier = Modifier.width(42.dp))
+                    Text("${channel.serverNumber ?: index + 1}", color = if (selected) Color.White else Go3Colors.TextFaint, fontSize = 18.sp, modifier = Modifier.width(42.dp))
                     Column {
                         Text(channel.name, color = Color.White, fontSize = 21.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
-                        Text(now?.title ?: "Saatekava puudub", color = if (selected) Color.White else Color.LightGray, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(now?.title ?: "Saatekava puudub", color = if (selected) Color.White else Go3Colors.TextSecondary, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
             Spacer(Modifier.height(3.dp))
-            Text("→ Telekava   •   OK vali", color = Color.LightGray, fontSize = 14.sp)
+            KeyHintRow("▶" to "telekava", "OK" to "vali")
         }
     }
 }
@@ -444,24 +425,24 @@ private fun GuideOverlay(state: TvUiState) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
         Column(
             Modifier.fillMaxWidth().fillMaxHeight(0.82f)
-                .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
-                .background(Brush.verticalGradient(listOf(Color(0xB80E2946), Color(0xC4071221)))),
+                .clip(RoundedCornerShape(topStart = Go3Radii.XL, topEnd = Go3Radii.XL))
+                .background(Go3Brushes.guideSheet),
             verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
-            Row(Modifier.fillMaxWidth().height(42.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.width(220.dp)) {
+            Row(Modifier.fillMaxWidth().height(46.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.width(220.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("TELEKAVA", color = Cyan, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Text("TELEKAVA", color = Go3Colors.Cyan, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         Text(
                             if (state.favoritesOnly) "  ★ LEMMIKUD" else "  ☆ KÕIK",
-                            color = if (state.favoritesOnly) Color(0xFFFFD65C) else Color(0xFF91A9C3),
+                            color = if (state.favoritesOnly) Go3Colors.Favorite else Go3Colors.TextHint,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                         )
                     }
-                    Text(formatDate(anchor), color = Color(0xFF91A9C3), fontSize = 12.sp)
+                    GuideDayBadge(anchor, now)
                 }
-                Column(Modifier.weight(1f)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
                         selectedChannel?.name.orEmpty(),
                         color = Color.White,
@@ -470,16 +451,16 @@ private fun GuideOverlay(state: TvUiState) {
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Text(guideControlsHint(), color = Color(0xFF9BB0C7), fontSize = 12.sp)
+                    KeyHintRow("◀▶" to "aeg", "▲▼" to "kanal", "OK" to "vaata • hoia: lemmikud")
                 }
             }
 
             Row(Modifier.fillMaxWidth().height(26.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("KANAL", color = Color(0xFF718AA5), fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(206.dp))
+                Text("KANAL", color = Go3Colors.TextFaint, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(206.dp))
                 BoxWithConstraints(Modifier.weight(1f).fillMaxHeight()) {
                     Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         repeat(5) { hour ->
-                            Text(formatTime(windowStart.plus(Duration.ofHours(hour.toLong()))), color = Color(0xFF8FA6BE), fontSize = 12.sp)
+                            Text(formatTime(windowStart.plus(Duration.ofHours(hour.toLong()))), color = Go3Colors.TextHint, fontSize = 12.sp)
                         }
                     }
                     if (!now.isBefore(windowStart) && now.isBefore(windowEnd)) {
@@ -493,8 +474,8 @@ private fun GuideOverlay(state: TvUiState) {
                             modifier = Modifier
                                 .offset(x = badgeX)
                                 .align(Alignment.CenterStart)
-                                .background(Color(0xF019567C), RoundedCornerShape(9.dp))
-                                .border(1.dp, Cyan.copy(alpha = 0.75f), RoundedCornerShape(9.dp))
+                                .background(Go3Colors.NowBadge, RoundedCornerShape(Go3Radii.S))
+                                .border(1.dp, Go3Colors.Cyan.copy(alpha = 0.75f), RoundedCornerShape(Go3Radii.S))
                                 .padding(horizontal = 7.dp, vertical = 2.dp),
                             color = Color.White,
                             fontSize = 11.sp,
@@ -520,38 +501,27 @@ private fun GuideOverlay(state: TvUiState) {
                         scheduledAutoTuneIds = state.scheduledAutoTuneIds,
                     )
                 }
+                if (offset < visibleChannels.lastIndex) {
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(Go3Colors.GridLine))
+                }
             }
 
             Row(
                 Modifier.fillMaxWidth().height(62.dp)
-                    .background(Color(0xE5122740), RoundedCornerShape(10.dp))
+                    .background(Go3Colors.InfoBar)
                     .padding(horizontal = 14.dp, vertical = 7.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (selectedProgram == null) {
-                    Text("Selle kanali saatekava puudub", color = Color(0xFF9BB0C7), fontSize = 16.sp)
+                    Text("Selle kanali saatekava puudub", color = Go3Colors.TextHint, fontSize = 16.sp)
                 } else {
                     Column(Modifier.width(112.dp)) {
-                        Text("${formatTime(selectedProgram.startsAt)}–${formatTime(selectedProgram.endsAt)}", color = Cyan, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                        Text(formatDate(selectedProgram.startsAt), color = Color(0xFF8299B2), fontSize = 11.sp)
+                        Text("${formatTime(selectedProgram.startsAt)}–${formatTime(selectedProgram.endsAt)}", color = Go3Colors.Cyan, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text(formatDate(selectedProgram.startsAt), color = Go3Colors.TextFaint, fontSize = 11.sp)
                     }
                     Column(Modifier.weight(1f)) {
                         Text(selectedProgram.title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(selectedProgram.description.orEmpty(), color = Color(0xFFAAB9C9), fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    }
-                    if (selectedProgram.id in state.scheduledReminderIds) {
-                        Box(
-                            modifier = Modifier.padding(start = 9.dp).size(10.dp)
-                                .background(Color(0xFF59E391), RoundedCornerShape(50))
-                                .border(1.dp, Color(0xFF0A2231), RoundedCornerShape(50)),
-                        )
-                    }
-                    if (selectedProgram.id in state.scheduledAutoTuneIds) {
-                        Box(
-                            modifier = Modifier.padding(start = 7.dp).size(10.dp)
-                                .background(Color(0xFF55B4FF), RoundedCornerShape(50))
-                                .border(1.dp, Color(0xFF0A2231), RoundedCornerShape(50)),
-                        )
+                        Text(selectedProgram.description.orEmpty(), color = Go3Colors.TextSecondary, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                     val status = when {
                         ProgramWindow.isCurrent(selectedProgram, now) -> "OTSE"
@@ -561,21 +531,79 @@ private fun GuideOverlay(state: TvUiState) {
                     }
                     Text(
                         status,
-                        modifier = Modifier.padding(start = 14.dp).background(Color(0xFF173C60), RoundedCornerShape(14.dp)).padding(horizontal = 11.dp, vertical = 5.dp),
-                        color = if (status == "OTSE") Cyan else Color(0xFFB9C7D6),
+                        modifier = Modifier.padding(start = 14.dp).background(Go3Colors.StatusChip, RoundedCornerShape(Go3Radii.L)).padding(horizontal = 11.dp, vertical = 5.dp),
+                        color = if (status == "OTSE") Go3Colors.Cyan else Go3Colors.TextSecondary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                     )
                 }
             }
+            GuideLegend(
+                reminderActive = selectedProgram != null && selectedProgram.id in state.scheduledReminderIds,
+                autoTuneActive = selectedProgram != null && selectedProgram.id in state.scheduledAutoTuneIds,
+            )
         }
     }
 }
 
-private fun guideControlsHint() = buildAnnotatedString {
-    append("←→ aeg  •  ↑↓ kanal  •  OK vaata  •  hoia OK lemmikud  •  ")
-    withStyle(SpanStyle(color = Color(0xFFFFD84D))) { append("●") }
-    append(" abi")
+@Composable
+private fun GuideLegend(reminderActive: Boolean, autoTuneActive: Boolean) {
+    Row(
+        Modifier.fillMaxWidth().height(30.dp)
+            .background(Go3Colors.InfoBar)
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(24.dp),
+    ) {
+        LegendItem(Go3Colors.KeyRed, "eelmine päev")
+        LegendItem(Go3Colors.KeyGreen, "järgmine päev")
+        LegendItem(Go3Colors.KeyYellow, "meeldetuletus", active = reminderActive)
+        LegendItem(Go3Colors.KeyBlue, "lülitu kanalile", active = autoTuneActive)
+    }
+}
+
+@Composable
+private fun LegendItem(dotColor: Color, label: String, active: Boolean = false) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+        Box(
+            Modifier.size(9.dp).background(dotColor, RoundedCornerShape(50)).then(
+                if (active) Modifier.border(1.5.dp, Color.White.copy(alpha = 0.9f), RoundedCornerShape(50)) else Modifier,
+            ),
+        )
+        Text(
+            label,
+            color = if (active) Color.White else Go3Colors.TextHint,
+            fontSize = 12.sp,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+        )
+    }
+}
+
+@Composable
+private fun GuideDayBadge(anchor: Instant, now: Instant) {
+    val zone = ZoneId.systemDefault()
+    val dayDiff = anchor.atZone(zone).toLocalDate().toEpochDay() - now.atZone(zone).toLocalDate().toEpochDay()
+    val label = when (dayDiff) {
+        0L -> "TÄNA"
+        1L -> "HOMME"
+        -1L -> "EILE"
+        else -> null
+    }
+    val text = if (label != null) "$label  •  ${formatDate(anchor)}" else formatDate(anchor)
+    if (dayDiff == 0L) {
+        Text(text, color = Go3Colors.TextHint, fontSize = 12.sp)
+    } else {
+        // Away from today: highlight the badge so the jumped-to day is obvious.
+        Text(
+            text,
+            modifier = Modifier
+                .background(Go3Colors.Accent, RoundedCornerShape(Go3Radii.XS))
+                .padding(horizontal = 6.dp, vertical = 1.dp),
+            color = Color.White,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+        )
+    }
 }
 
 @Composable
@@ -592,15 +620,15 @@ private fun GuideChannelRow(
     scheduledAutoTuneIds: Set<String>,
 ) {
     val selectedChannel = channelIndex == selectedChannelIndex
-    val rowColor = if (selectedChannel) SelectedRow else Color(0x3D142A42)
+    val rowColor = if (selectedChannel) Go3Colors.SelectedRow else Go3Colors.GuideRowTint
     Row(
-        Modifier.fillMaxWidth().height(48.dp).background(rowColor),
+        Modifier.fillMaxWidth().height(44.dp).background(rowColor),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(Modifier.width(220.dp).padding(horizontal = 7.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 "${channel.serverNumber ?: channelIndex + 1}",
-                modifier = Modifier.width(40.dp).background(if (selectedChannel) Accent else Color(0xFF17304B), RoundedCornerShape(6.dp)).padding(vertical = 4.dp),
+                modifier = Modifier.width(40.dp).background(if (selectedChannel) Go3Colors.Accent else Go3Colors.ChipIdle, RoundedCornerShape(Go3Radii.XS)).padding(vertical = 4.dp),
                 color = Color.White,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
@@ -609,7 +637,7 @@ private fun GuideChannelRow(
             Text(
                 channel.name,
                 modifier = Modifier.padding(start = 9.dp).weight(1f),
-                color = if (selectedChannel) Color.White else Color(0xFFC1CEDB),
+                color = if (selectedChannel) Color.White else Go3Colors.TextSecondary,
                 fontSize = 15.sp,
                 fontWeight = if (selectedChannel) FontWeight.SemiBold else FontWeight.Normal,
                 maxLines = 1,
@@ -624,7 +652,7 @@ private fun GuideChannelRow(
             now = now,
             scheduledReminderIds = scheduledReminderIds,
             scheduledAutoTuneIds = scheduledAutoTuneIds,
-            modifier = Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(7.dp)).background(Color(0xB5091829)),
+            modifier = Modifier.weight(1f).fillMaxHeight().background(Go3Colors.TimelineBackground),
         )
     }
 }
@@ -645,6 +673,7 @@ private fun GuideTimelineCanvas(
     val timePaint = remember { TextPaint(Paint.ANTI_ALIAS_FLAG).apply { typeface = android.graphics.Typeface.DEFAULT_BOLD } }
     val titlePaint = remember { TextPaint(Paint.ANTI_ALIAS_FLAG) }
     val linePaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
+    val gridPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
     val progressTrackPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
     val progressPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
     val actionHaloPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
@@ -659,29 +688,19 @@ private fun GuideTimelineCanvas(
     Canvas(modifier) {
         val canvas = drawContext.canvas.nativeCanvas
         val totalMillis = Duration.between(windowStart, windowEnd).toMillis().coerceAtLeast(1).toFloat()
-        val verticalPadding = 3.dp.toPx()
         val horizontalPadding = 8.dp.toPx()
-        val gap = 3.dp.toPx()
         val minimumWidth = 30.dp.toPx()
-        val radius = 6.dp.toPx()
         timePaint.textSize = 11.sp.toPx()
         titlePaint.textSize = 13.sp.toPx()
         borderPaint.strokeWidth = 2.dp.toPx()
-        borderPaint.color = Color(0xFFDDF4FF).toArgb()
-        linePaint.color = Cyan.copy(alpha = 0.32f).toArgb()
-        progressTrackPaint.color = Color(0xA0061728).toArgb()
-        progressPaint.color = Cyan.toArgb()
-        actionHaloPaint.color = Color(0xCC06121F).toArgb()
-        reminderPaint.color = Color(0xFF59E391).toArgb()
-        autoTunePaint.color = Color(0xFF55B4FF).toArgb()
-
-        // Keep the current-time marker behind programme cards. It remains visible
-        // in the narrow gaps without ever crossing programme titles.
-        if (!now.isBefore(windowStart) && now.isBefore(windowEnd)) {
-            val nowFraction = (Duration.between(windowStart, now).toMillis() / totalMillis).coerceIn(0f, 1f)
-            val lineX = size.width * nowFraction
-            canvas.drawRect(lineX, 0f, lineX + 1.dp.toPx(), size.height, linePaint)
-        }
+        borderPaint.color = Go3Colors.CellHighlightBorder.toArgb()
+        linePaint.color = Go3Colors.Cyan.copy(alpha = 0.45f).toArgb()
+        gridPaint.color = Go3Colors.GridLine.toArgb()
+        progressTrackPaint.color = Go3Colors.InkShadow.toArgb()
+        progressPaint.color = Go3Colors.Cyan.toArgb()
+        actionHaloPaint.color = Go3Colors.InkShadow.toArgb()
+        reminderPaint.color = Go3Colors.KeyYellow.toArgb()
+        autoTunePaint.color = Go3Colors.KeyBlue.toArgb()
 
         drawingPrograms.forEach { program ->
                 val clippedStart = if (program.startsAt.isBefore(windowStart)) windowStart else program.startsAt
@@ -689,23 +708,29 @@ private fun GuideTimelineCanvas(
                 val startFraction = (Duration.between(windowStart, clippedStart).toMillis() / totalMillis).coerceIn(0f, 1f)
                 val endFraction = (Duration.between(windowStart, clippedEnd).toMillis() / totalMillis).coerceIn(0f, 1f)
                 val left = size.width * startFraction
-                val naturalRight = size.width * endFraction - gap
+                val naturalRight = size.width * endFraction
                 val right = naturalRight.coerceAtLeast(left + minimumWidth).coerceAtMost(size.width)
                 if (right <= left) return@forEach
                 val selected = program.id == selectedProgramId
                 fillPaint.color = when {
-                    selected -> Accent.toArgb()
-                    ProgramWindow.isCurrent(program, now) -> CurrentProgramBlue.toArgb()
-                    else -> ProgramBlue.toArgb()
+                    selected -> Go3Colors.Accent.toArgb()
+                    ProgramWindow.isCurrent(program, now) -> Go3Colors.ProgramCellLive.toArgb()
+                    else -> Go3Colors.ProgramCell.toArgb()
                 }
-                val rect = RectF(left, verticalPadding, right, size.height - verticalPadding)
-                canvas.drawRoundRect(rect, radius, radius, fillPaint)
-                if (selected) canvas.drawRoundRect(rect, radius, radius, borderPaint)
+                val rect = RectF(left, 0f, right, size.height)
+                canvas.drawRect(rect, fillPaint)
+                if (selected) {
+                    val inset = 1.dp.toPx()
+                    canvas.drawRect(RectF(rect.left + inset, rect.top + inset, rect.right - inset, rect.bottom - inset), borderPaint)
+                } else {
+                    // Table look: cells separated by a hairline instead of a gap.
+                    canvas.drawRect(right - 1.dp.toPx(), rect.top, right, rect.bottom, gridPaint)
+                }
 
                 val availableTextWidth = (right - left - horizontalPadding * 2).coerceAtLeast(1f)
-                timePaint.color = if (selected) Color.White.toArgb() else Color(0xFFA7BDD2).toArgb()
+                timePaint.color = if (selected) Color.White.toArgb() else Go3Colors.TextSecondary.toArgb()
                 titlePaint.color = Color.White.toArgb()
-                val timeBaseline = verticalPadding + timePaint.textSize + 2.dp.toPx()
+                val timeBaseline = 4.dp.toPx() + timePaint.textSize
                 canvas.drawText(formatTime(program.startsAt), left + horizontalPadding, timeBaseline, timePaint)
                 val title = TextUtils.ellipsize(program.title, titlePaint, availableTextWidth, TextUtils.TruncateAt.END).toString()
                 canvas.drawText(title, left + horizontalPadding, timeBaseline + titlePaint.textSize + 2.dp.toPx(), titlePaint)
@@ -728,6 +753,14 @@ private fun GuideTimelineCanvas(
 
             }
 
+        // With a gapless table the current-time marker must sit above the cells;
+        // it crosses them as a thin translucent line, under the action markers.
+        if (!now.isBefore(windowStart) && now.isBefore(windowEnd)) {
+            val nowFraction = (Duration.between(windowStart, now).toMillis() / totalMillis).coerceIn(0f, 1f)
+            val lineX = size.width * nowFraction
+            canvas.drawRect(lineX, 0f, lineX + 1.dp.toPx(), size.height, linePaint)
+        }
+
         // Draw programme actions in a dedicated top layer. Short programme cards
         // may overlap because of their minimum width, but must never hide a marker.
         drawingPrograms.forEach { program ->
@@ -740,7 +773,7 @@ private fun GuideTimelineCanvas(
             val startFraction = (Duration.between(windowStart, clippedStart).toMillis() / totalMillis).coerceIn(0f, 1f)
             val endFraction = (Duration.between(windowStart, clippedEnd).toMillis() / totalMillis).coerceIn(0f, 1f)
             val left = size.width * startFraction
-            val right = (size.width * endFraction - gap)
+            val right = (size.width * endFraction)
                 .coerceAtLeast(left + minimumWidth)
                 .coerceAtMost(size.width)
             if (right <= left) return@forEach
@@ -748,7 +781,7 @@ private fun GuideTimelineCanvas(
             val dotRadius = 3.5.dp.toPx()
             val haloRadius = dotRadius + 1.5.dp.toPx()
             val dotGap = 3.dp.toPx()
-            val dotY = verticalPadding + 7.dp.toPx()
+            val dotY = 7.dp.toPx()
             val rightDotX = right - 8.dp.toPx()
             val reminderX = if (hasReminder && hasAutoTune) rightDotX - dotRadius * 2 - dotGap else rightDotX
             if (hasReminder) {
@@ -773,64 +806,52 @@ private fun AppSettingsOverlay(state: TvUiState) {
         "Subtiitrid" to "${state.subtitleTrackLabel} • kõigil kanalitel",
         "Värskenda kanalipaketti" to "Kontrolli Go3 tellimust ja peidetud kanaleid uuesti",
     )
-    Box(Modifier.fillMaxSize().background(Color(0xB0050B14)), contentAlignment = Alignment.CenterStart) {
+    Box(Modifier.fillMaxSize().background(Go3Colors.Scrim), contentAlignment = Alignment.CenterStart) {
         Column(
             Modifier.fillMaxHeight().width(760.dp)
-                .background(Brush.horizontalGradient(listOf(Color(0xFC071A2D), Color(0xF20E2946))))
+                .background(Go3Brushes.settingsPanel)
                 .padding(horizontal = 44.dp, vertical = 28.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("SEADED", color = Cyan, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-            Text("Go3 TV+", color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Bold)
-            Text("↑↓ vali  •  OK või → ava/muuda  •  BACK sulge", color = Color(0xFF9DB2C7), fontSize = 14.sp)
+            OverlayHeader(
+                "SEADED",
+                "Go3 TV+",
+                keyHints = listOf("▲▼" to "vali", "OK" to "ava/muuda", "BACK" to "sulge"),
+            )
             Spacer(Modifier.height(8.dp))
             rows.forEachIndexed { index, (title, value) ->
                 val selected = index == state.appSettingsIndex
-                Row(
-                    Modifier.fillMaxWidth()
-                        .background(if (selected) Accent else Color(0xB3132942), RoundedCornerShape(10.dp))
-                        .padding(horizontal = 18.dp, vertical = 11.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+                SettingsRow(selected, verticalPadding = 11.dp) {
                     Column(Modifier.weight(1f)) {
                         Text(title, color = Color.White, fontSize = 20.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold)
-                        Text(value, color = if (selected) Color.White else Color(0xFFAABBCD), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(value, color = if (selected) Color.White else Go3Colors.TextSecondary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    Text("›", color = if (selected) Color.White else Color(0xFF7890A8), fontSize = 30.sp)
+                    Text("›", color = if (selected) Color.White else Go3Colors.TextFaint, fontSize = 30.sp)
                 }
             }
             Spacer(Modifier.weight(1f))
-            Text("Versioon ${ee.local.go3tvplus.BuildConfig.VERSION_NAME}", color = Color(0xFF71879E), fontSize = 13.sp)
+            Text("Versioon ${ee.local.go3tvplus.BuildConfig.VERSION_NAME}", color = Go3Colors.TextFaint, fontSize = 13.sp)
         }
     }
 }
 
 @Composable
 private fun ProfileSettingsOverlay(state: TvUiState) {
-    Box(Modifier.fillMaxSize().background(Color(0xE6051020)), contentAlignment = Alignment.Center) {
-        Column(Modifier.width(680.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("GO3 PROFIIL", color = Cyan, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-            Text("Vali vaatamisprofiil", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold)
-            Text("Profiili vahetamine värskendab kanalipaketti", color = Color(0xFF9DB2C7), fontSize = 15.sp)
-            Spacer(Modifier.height(10.dp))
-            if (state.profiles.isEmpty()) {
-                Text("Laadin Go3 profiile…", color = Color.LightGray, fontSize = 18.sp)
-            }
-            state.profiles.forEachIndexed { index, profile ->
-                val selected = index == state.profileSettingsIndex
-                val active = profile.id == state.selectedProfileId
-                Row(
-                    Modifier.fillMaxWidth()
-                        .background(if (selected) Accent else Color(0xD1132942), RoundedCornerShape(10.dp))
-                        .padding(horizontal = 18.dp, vertical = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(profile.name, color = Color.White, fontSize = 21.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f))
-                    if (active) Text("PRAEGUNE", color = if (selected) Color.White else Cyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-            Text("↑↓ vali  •  OK kinnita  •  BACK tagasi", color = Color(0xFF8FA4BA), fontSize = 14.sp, modifier = Modifier.align(Alignment.End))
+    CenteredMenuPanel {
+        OverlayHeader("GO3 PROFIIL", "Vali vaatamisprofiil", "Profiili vahetamine värskendab kanalipaketti")
+        Spacer(Modifier.height(6.dp))
+        if (state.profiles.isEmpty()) {
+            Text("Laadin Go3 profiile…", color = Go3Colors.TextSecondary, fontSize = 18.sp)
         }
+        state.profiles.forEachIndexed { index, profile ->
+            val selected = index == state.profileSettingsIndex
+            val active = profile.id == state.selectedProfileId
+            SettingsRow(selected, verticalPadding = 16.dp) {
+                Text(profile.name, color = Color.White, fontSize = 21.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f))
+                if (active) RowBadge("PRAEGUNE", selected)
+            }
+        }
+        KeyHintRow("▲▼" to "vali", "OK" to "kinnita", "BACK" to "sulge", modifier = Modifier.align(Alignment.End))
     }
 }
 
@@ -842,26 +863,18 @@ private fun LanguageSettingsOverlay(
     selectedIndex: Int,
     activeLanguage: String?,
 ) {
-    Box(Modifier.fillMaxSize().background(Color(0xE6051020)), contentAlignment = Alignment.Center) {
-        Column(Modifier.width(680.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(title, color = Cyan, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-            Text(description, color = Color(0xFF9DB2C7), fontSize = 15.sp)
-            Spacer(Modifier.height(10.dp))
-            options.forEachIndexed { index, (language, label) ->
-                val selected = index == selectedIndex
-                val active = language == activeLanguage
-                Row(
-                    Modifier.fillMaxWidth()
-                        .background(if (selected) Accent else Color(0xD1132942), RoundedCornerShape(10.dp))
-                        .padding(horizontal = 18.dp, vertical = 15.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(label, color = Color.White, fontSize = 21.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f))
-                    if (active) Text("EELISTATUD", color = if (selected) Color.White else Cyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
+    CenteredMenuPanel {
+        OverlayHeader(title, hint = description)
+        Spacer(Modifier.height(6.dp))
+        options.forEachIndexed { index, (language, label) ->
+            val selected = index == selectedIndex
+            val active = language == activeLanguage
+            SettingsRow(selected, verticalPadding = 15.dp) {
+                Text(label, color = Color.White, fontSize = 21.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f))
+                if (active) RowBadge("EELISTATUD", selected)
             }
-            Text("↑↓ vali  •  OK kinnita  •  BACK tagasi", color = Color(0xFF8FA4BA), fontSize = 14.sp, modifier = Modifier.align(Alignment.End))
         }
+        KeyHintRow("▲▼" to "vali", "OK" to "kinnita", "BACK" to "sulge", modifier = Modifier.align(Alignment.End))
     }
 }
 
@@ -870,58 +883,57 @@ private fun ChannelSettingsOverlay(state: TvUiState) {
     val selectedIndex = state.settingsIndex.coerceIn(0, state.channels.lastIndex.coerceAtLeast(0))
     val first = (selectedIndex - 3).coerceAtLeast(0)
     val visible = state.channels.drop(first).take(7)
-    Box(Modifier.fillMaxSize().background(Color(0xE6051020)), contentAlignment = Alignment.Center) {
-        Column(Modifier.width(700.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("KANALITE SEADISTUS", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold)
-            Text("↑↓ vali  •  ←→ muuda numbrit  •  OK lemmik  •  numbriklahvid sisestavad uue numbri", color = Color.LightGray, fontSize = 15.sp)
-            Spacer(Modifier.height(8.dp))
-            visible.forEachIndexed { offset, channel ->
-                val index = first + offset
-                val selected = index == selectedIndex
-                Row(
-                    Modifier.fillMaxWidth().background(if (selected) Accent else Color(0xD1132942), RoundedCornerShape(7.dp)).padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("${channel.serverNumber ?: index + 1}", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(70.dp))
-                    Text(channel.name, color = Color.White, fontSize = 20.sp, modifier = Modifier.weight(1f))
-                    Text(if (channel.id in state.favoriteChannelIds) "★ Lemmik" else "☆", color = if (channel.id in state.favoriteChannelIds) Color(0xFFFFD45A) else Color.LightGray, fontSize = 18.sp)
-                }
+    CenteredMenuPanel(width = 700.dp) {
+        OverlayHeader(
+            "KANALID",
+            "Kanalite seadistus",
+            keyHints = listOf("▲▼" to "vali", "◀▶" to "muuda numbrit", "OK" to "lemmik", "0–9" to "uus number"),
+        )
+        Spacer(Modifier.height(4.dp))
+        visible.forEachIndexed { offset, channel ->
+            val index = first + offset
+            val selected = index == selectedIndex
+            SettingsRow(selected, verticalPadding = 10.dp) {
+                Text("${channel.serverNumber ?: index + 1}", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(70.dp))
+                Text(channel.name, color = Color.White, fontSize = 20.sp, modifier = Modifier.weight(1f))
+                Text(if (channel.id in state.favoriteChannelIds) "★ Lemmik" else "☆", color = if (channel.id in state.favoriteChannelIds) Go3Colors.Favorite else Go3Colors.TextSecondary, fontSize = 18.sp)
             }
-            Text("BACK sulgeb", color = Color.Gray, fontSize = 14.sp, modifier = Modifier.align(Alignment.End))
         }
+        KeyHintRow("BACK" to "sulge", modifier = Modifier.align(Alignment.End))
     }
 }
 
 @Composable
-private fun ErrorBanner(message: String, selectedAction: Int, onRetry: () -> Unit, onDismiss: () -> Unit) {
+private fun ErrorBanner(message: String, selectedAction: Int) {
     Row(
-        Modifier.fillMaxWidth().background(Color(0xEE651F28)).padding(horizontal = 30.dp, vertical = 14.dp),
+        Modifier.fillMaxWidth().background(Go3Colors.ErrorSurface).padding(horizontal = 30.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         Text(message, color = Color.White, fontSize = 18.sp, modifier = Modifier.weight(1f))
-        ErrorAction("Proovi uuesti", selectedAction == 0, onRetry)
-        ErrorAction("Sulge", selectedAction == 1, onDismiss)
+        ErrorAction("Proovi uuesti", selectedAction == 0)
+        ErrorAction("Sulge", selectedAction == 1)
     }
 }
 
 @Composable
-private fun ErrorAction(label: String, selected: Boolean, onClick: () -> Unit) {
-    Button(
-        onClick = onClick,
-        modifier = Modifier.then(
-            if (selected) Modifier.border(3.dp, Color.White, RoundedCornerShape(24.dp)) else Modifier,
-        ),
-    ) {
-        Text(if (selected) "› $label" else label, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
-    }
+private fun ErrorAction(label: String, selected: Boolean) {
+    Text(
+        label,
+        modifier = Modifier
+            .background(if (selected) Go3Colors.Accent else Go3Colors.ChipIdle, RoundedCornerShape(Go3Radii.L))
+            .padding(horizontal = 18.dp, vertical = 8.dp),
+        color = Color.White,
+        fontSize = 16.sp,
+        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+    )
 }
 
 @Composable
 private fun DemoBadge() {
     Text(
         "DEMO – Go3 API pole ühendatud",
-        modifier = Modifier.padding(14.dp).background(Color(0xE315426B), RoundedCornerShape(6.dp)).padding(horizontal = 12.dp, vertical = 7.dp),
+        modifier = Modifier.padding(14.dp).background(Go3Colors.NoticeSurface, RoundedCornerShape(Go3Radii.S)).padding(horizontal = 12.dp, vertical = 7.dp),
         color = Color.White,
         fontSize = 13.sp,
         fontWeight = FontWeight.Bold,

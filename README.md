@@ -20,6 +20,10 @@ Go3 API ei ole avalik ja võib muutuda. Teenusespetsiifiline leping on koondatud
 | `←` | Ava rakenduse seaded; EPG-s liigu eelmise saate juurde |
 | `OK` | Kinnita valik; puhtas mängijavaates ava ajariba |
 | Hoia EPG-s `OK` | Lülita kõikide kanalite ja lemmikute filter ümber |
+| EPG-s `punane` | Hüppa telekavas üks päev tagasi |
+| EPG-s `roheline` | Hüppa telekavas üks päev edasi |
+| EPG-s `kollane` | Lisa või eemalda valitud saate meeldetuletus |
+| EPG-s `sinine` | Lisa või eemalda automaatne kanalile lülitumine |
 | `GUIDE / MENU` | Ava EPG, kui puldil vastav nupp siiski leidub |
 | `0–9` | Sisesta 1–3-kohaline kanalinumber; häälestus 2 sekundi järel |
 | `BACK` | Sulge esmalt aktiivne kiht, siis rakendus |

@@ -6,12 +6,14 @@ import ee.local.go3tvplus.domain.Go3Gateway
 import ee.local.go3tvplus.domain.TokenStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.Instant
 
 class AuthCoordinator(
@@ -20,8 +22,11 @@ class AuthCoordinator(
     private val scope: CoroutineScope,
     private val clock: () -> Instant = Instant::now,
 ) {
+    // Tokens are decrypted from the Android Keystore exactly once; every later
+    // call — including the playback-critical liveTicket path — stays in memory.
+    @Volatile private var cachedTokens: AuthTokens? = tokenStore.load()
     private val mutableState = MutableStateFlow<DeviceAuthState>(
-        if (tokenStore.load() != null) DeviceAuthState.Approved else DeviceAuthState.Idle,
+        if (cachedTokens != null) DeviceAuthState.Approved else DeviceAuthState.Idle,
     )
     val state: StateFlow<DeviceAuthState> = mutableState.asStateFlow()
     private var authJob: Job? = null
@@ -41,6 +46,7 @@ class AuthCoordinator(
                 )
                 while (clock().isBefore(code.expiresAt)) {
                     gateway.pollDeviceCode(code.code)?.let { approved ->
+                        cachedTokens = approved
                         tokenStore.save(approved)
                         mutableState.value = DeviceAuthState.Approved
                         return@launch
@@ -58,14 +64,18 @@ class AuthCoordinator(
 
     fun signOut() {
         authJob?.cancel()
+        cachedTokens = null
         tokenStore.clear()
         mutableState.value = DeviceAuthState.Idle
     }
 
     suspend fun validTokens(): AuthTokens {
-        val current = tokenStore.load() ?: error("Konto ei ole seotud")
+        val current = cachedTokens ?: error("Konto ei ole seotud")
         if (current.expiresAt.isAfter(clock().plusSeconds(60))) return current
         val refresh = current.refreshToken ?: error("Sisselogimine aegus")
-        return gateway.refreshTokens(refresh).also(tokenStore::save)
+        return gateway.refreshTokens(refresh).also { tokens ->
+            cachedTokens = tokens
+            withContext(Dispatchers.IO) { tokenStore.save(tokens) }
+        }
     }
 }

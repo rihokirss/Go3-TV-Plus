@@ -27,9 +27,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.time.Duration
 import java.time.Instant
 
 enum class Overlay {
@@ -63,6 +67,8 @@ data class TvUiState(
     val subtitleTrackLabel: String = "Väljas",
     val favoriteChannelIds: Set<String> = emptySet(),
     val numberInput: String = "",
+    /** Set while a catchup stream plays, so overlays show the right programme. */
+    val catchupProgram: Program? = null,
     val seekPositionMs: Long = 0L,
     val seekDurationMs: Long = 0L,
     val seekLiveOffsetMs: Long? = null,
@@ -140,35 +146,52 @@ class TvViewModel(
             }
         }
         viewModelScope.launch {
-            repository.guide.collect { (rawChannels, programs) ->
+            // Channels alone drive the first tune, so playback never waits for
+            // the (much heavier) programme indexing below.
+            repository.channels.conflate().collect { rawChannels ->
                 val profileId = mutableState.value.selectedProfileId
                 val hiddenChannelIds = profileId?.let { repository.hiddenChannelIds(it) }.orEmpty()
                 val availableRawChannels = rawChannels.filterNot { it.id in hiddenChannelIds }
-                val availableIds = availableRawChannels.mapTo(mutableSetOf(), Channel::id)
+                val saved = repository.channelPreferences(availableRawChannels)
+                val channels = availableRawChannels.mapIndexed { index, channel ->
+                    channel.copy(serverNumber = saved[channel.id]?.number ?: channel.serverNumber ?: index + 1)
+                }.sortedBy { it.serverNumber }
+                val availableIds = channels.mapTo(mutableSetOf(), Channel::id)
+                val favoriteIds = saved.values.filter(ChannelPreference::favorite)
+                    .map(ChannelPreference::channelId).filterTo(mutableSetOf()) { it in availableIds }
+                mutableState.value = mutableState.value.copy(
+                    channels = channels,
+                    favoriteChannelIds = favoriteIds,
+                    favoritesOnly = mutableState.value.favoritesOnly && favoriteIds.isNotEmpty(),
+                )
+                tuneInitialChannelIfNeeded()
+            }
+        }
+        viewModelScope.launch {
+            repository.guide.conflate().collect { (rawChannels, programs) ->
+                val profileId = mutableState.value.selectedProfileId
+                val hiddenChannelIds = profileId?.let { repository.hiddenChannelIds(it) }.orEmpty()
+                val availableIds = rawChannels.filterNot { it.id in hiddenChannelIds }
+                    .mapTo(mutableSetOf(), Channel::id)
                 val indexedPrograms = withContext(Dispatchers.Default) {
                     programs.groupBy(Program::channelId)
                         .filterKeys { it in availableIds }
                         .mapValues { (_, channelPrograms) -> channelPrograms.sortedBy(Program::startsAt) }
                 }
-                val saved = repository.channelPreferences(availableRawChannels)
-                val channels = availableRawChannels.mapIndexed { index, channel ->
-                    channel.copy(serverNumber = saved[channel.id]?.number ?: channel.serverNumber ?: index + 1)
-                }.sortedBy { it.serverNumber }
-                val favoriteIds = saved.values.filter(ChannelPreference::favorite)
-                    .map(ChannelPreference::channelId).filterTo(mutableSetOf()) { it in availableIds }
-                mutableState.value = mutableState.value.copy(
-                    channels = channels,
-                    programsByChannel = indexedPrograms,
-                    favoriteChannelIds = favoriteIds,
-                    favoritesOnly = mutableState.value.favoritesOnly && favoriteIds.isNotEmpty(),
-                )
-                if (channels.isNotEmpty() && mutableState.value.currentChannelId == null) {
-                    val preferred = repository.lastChannelId()
-                    val favorites = saved.values.filter(ChannelPreference::favorite).map(ChannelPreference::channelId).toSet()
-                    tune(channels.firstOrNull { it.id == preferred } ?: channels.firstOrNull { it.id in favorites } ?: channels.first())
-                }
+                mutableState.value = mutableState.value.copy(programsByChannel = indexedPrograms)
             }
         }
+    }
+
+    private suspend fun tuneInitialChannelIfNeeded() {
+        val snapshot = mutableState.value
+        if (snapshot.selectedProfileId == null || snapshot.currentChannelId != null) return
+        if (snapshot.channels.isEmpty() || tuneJob?.isActive == true) return
+        val preferred = repository.lastChannelId()
+        val channel = snapshot.channels.firstOrNull { it.id == preferred }
+            ?: snapshot.channels.firstOrNull { it.id in snapshot.favoriteChannelIds }
+            ?: snapshot.channels.first()
+        tune(channel)
     }
 
     fun startPairing() = authCoordinator.start()
@@ -190,14 +213,22 @@ class TvViewModel(
             loadProfiles()
             return
         }
-        val firstLoad = mutableState.value.channels.isEmpty()
-        mutableState.value = mutableState.value.copy(selectedProfileId = remembered, loading = firstLoad)
+        mutableState.value = mutableState.value.copy(selectedProfileId = remembered)
+        tuneInitialChannelIfNeeded()
+        val hasCachedChannels = repository.channels.first().isNotEmpty()
+        if (hasCachedChannels) {
+            // Cached channels start playing right away; hold the channel/EPG
+            // download back so it doesn't compete with the first video segments.
+            withTimeoutOrNull(STARTUP_REFRESH_DEFER_MS) { state.first { it.videoVisible } }
+        } else {
+            mutableState.value = mutableState.value.copy(loading = true)
+        }
         try {
             repository.refresh(remembered)
         } catch (error: Exception) {
             if (mutableState.value.channels.isEmpty()) showError(error)
         } finally {
-            mutableState.value = mutableState.value.copy(loading = false)
+            if (!hasCachedChannels) mutableState.value = mutableState.value.copy(loading = false)
         }
     }
 
@@ -473,19 +504,28 @@ class TvViewModel(
     }
 
     private fun handleGuideColorKey(keyCode: Int) {
-        if (keyCode == KeyEvent.KEYCODE_PROG_YELLOW) {
-            showNotice("🟢 meeldetuletus  •  🔵 automaatlülitus  •  🔴 eemalda")
-            return
+        when (keyCode) {
+            KeyEvent.KEYCODE_PROG_RED -> {
+                jumpGuideDay(-1)
+                return
+            }
+            KeyEvent.KEYCODE_PROG_GREEN -> {
+                jumpGuideDay(1)
+                return
+            }
         }
         val snapshot = mutableState.value
         val program = programsForGuideChannel(snapshot).getOrNull(snapshot.guideProgramIndex)
         if (program == null || !program.startsAt.isAfter(Instant.now())) {
-            showNotice("Meeldetuletuse saab lisada tulevasele saatele")
+            showNotice(
+                if (keyCode == KeyEvent.KEYCODE_PROG_YELLOW) "Meeldetuletuse saab lisada tulevasele saatele"
+                else "Automaatlülituse saab lisada tulevasele saatele",
+            )
             return
         }
         val previous = scheduledProgramActions[program.id]
         val updated = when (keyCode) {
-            KeyEvent.KEYCODE_PROG_GREEN -> ScheduledProgramAction(
+            KeyEvent.KEYCODE_PROG_YELLOW -> ScheduledProgramAction(
                 programId = program.id,
                 channelId = program.channelId,
                 startsAtEpochMs = program.startsAt.toEpochMilli(),
@@ -499,9 +539,8 @@ class TvViewModel(
                 reminder = previous?.reminder == true,
                 autoTune = previous?.autoTune != true,
             )
-            KeyEvent.KEYCODE_PROG_RED -> null
             else -> return
-        }?.takeIf { it.reminder || it.autoTune }
+        }.takeIf { it.reminder || it.autoTune }
 
         scheduledProgramActions = scheduledProgramActions.toMutableMap().apply {
             if (updated == null) remove(program.id) else put(program.id, updated)
@@ -615,6 +654,20 @@ class TvViewModel(
             }
         }
         return true
+    }
+
+    private fun jumpGuideDay(direction: Long) {
+        val snapshot = mutableState.value
+        val channels = guideChannels(snapshot)
+        if (channels.isEmpty()) return
+        val target = (snapshot.guideAnchor ?: Instant.now()).plus(Duration.ofHours(24L * direction))
+        val programIndex = guideProgramIndexAt(channels, snapshot.guideChannelIndex, target)
+        val resolvedStart = snapshot.programsByChannel[channels.getOrNull(snapshot.guideChannelIndex)?.id]
+            .orEmpty().getOrNull(programIndex)?.startsAt
+        mutableState.value = snapshot.copy(
+            guideProgramIndex = programIndex,
+            guideAnchor = resolvedStart ?: target,
+        )
     }
 
     private fun toggleGuideFavorites() {
@@ -1068,7 +1121,7 @@ class TvViewModel(
                     channelName = channel.name,
                     programTitle = nowProgram(channel.id)?.title,
                 )
-                mutableState.value = mutableState.value.copy(currentChannelId = channel.id)
+                mutableState.value = mutableState.value.copy(currentChannelId = channel.id, catchupProgram = null)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -1088,7 +1141,7 @@ class TvViewModel(
         channelId: String,
         wakeRecovery: Boolean,
     ): PlaybackTicket {
-        val retryDelays = if (wakeRecovery) listOf(350L, 900L, 1_800L, 3_000L) else emptyList()
+        val retryDelays = if (wakeRecovery) listOf(350L, 900L, 1_800L, 3_000L) else listOf(350L, 900L, 1_800L)
         var lastUnavailable: Go3Failure.Unavailable? = null
         repeat(retryDelays.size + 1) { attempt ->
             try {
@@ -1149,6 +1202,7 @@ class TvViewModel(
                     val channelName = mutableState.value.channels
                         .firstOrNull { channel -> channel.id == program.channelId }
                         ?.name ?: "Go3 TV+"
+                    mutableState.value = mutableState.value.copy(catchupProgram = program)
                     tvPlayer.play(it, channelName, program.title)
                 }
             } catch (error: Exception) {
@@ -1322,6 +1376,7 @@ class TvViewModel(
     }
 }
 
+private const val STARTUP_REFRESH_DEFER_MS = 5_000L
 private const val CHANNEL_RAIL_TIMEOUT_MS = 5_000L
 private const val SEEK_OVERLAY_TIMEOUT_MS = 10_000L
 private const val PROGRAM_REMINDER_LEAD_MS = 60_000L
