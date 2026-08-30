@@ -13,6 +13,7 @@ import ee.local.go3tvplus.domain.Go3Failure
 import ee.local.go3tvplus.domain.PlaybackTicket
 import ee.local.go3tvplus.domain.Profile
 import ee.local.go3tvplus.domain.Program
+import ee.local.go3tvplus.domain.ProgramWindow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
@@ -32,7 +33,7 @@ class TvRepository(
     val channels: Flow<List<Channel>> = database.tvDao().observeChannels().map { rows -> rows.map { it.toDomain() } }
     val programs: Flow<List<Program>> = database.tvDao()
         .observePrograms(Instant.now().minus(Duration.ofDays(7)).toEpochMilli(), Instant.now().plus(Duration.ofDays(2)).toEpochMilli())
-        .map { rows -> rows.map { it.toDomain() } }
+        .map { rows -> ProgramWindow.deduplicateSchedule(rows.map { it.toDomain() }) }
         .flowOn(Dispatchers.Default)
     val guide: Flow<Pair<List<Channel>, List<Program>>> = combine(channels, programs, ::Pair)
 
@@ -40,7 +41,6 @@ class TvRepository(
 
     suspend fun refresh(profileId: String) {
         val token = auth.validTokens().accessToken
-        val now = Instant.now()
         val freshChannels = try {
             withTransientRetry(listOf(1_000L, 3_000L, 7_000L)) {
                 withContext(Dispatchers.Default) {
@@ -54,6 +54,12 @@ class TvRepository(
             database.tvDao().clearChannels()
             database.tvDao().replaceChannels(freshChannels.mapIndexed { index, channel -> channel.toEntity(index) })
         }
+        refreshPrograms(profileId)
+    }
+
+    suspend fun refreshPrograms(profileId: String): List<Program> {
+        val token = auth.validTokens().accessToken
+        val now = Instant.now()
         val freshPrograms = try {
             withTransientRetry(listOf(5_000L, 10_000L)) {
                 withContext(Dispatchers.Default) {
@@ -69,9 +75,11 @@ class TvRepository(
             throw Go3Failure.Unavailable("Telekava laadimine: ${error.message ?: "tundmatu viga"}", error)
         }
         database.withTransaction {
+            database.tvDao().clearPrograms()
             database.tvDao().replacePrograms(freshPrograms.map(Program::toEntity))
             database.tvDao().prunePrograms(now.minus(Duration.ofDays(8)).toEpochMilli())
         }
+        return freshPrograms
     }
 
     private suspend fun <T> withTransientRetry(

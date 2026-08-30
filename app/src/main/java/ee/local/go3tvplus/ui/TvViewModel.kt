@@ -172,7 +172,8 @@ class TvViewModel(
         }
         viewModelScope.launch {
             repository.guide.conflate().collect { (rawChannels, programs) ->
-                val profileId = mutableState.value.selectedProfileId
+                val previous = mutableState.value
+                val profileId = previous.selectedProfileId
                 val hiddenChannelIds = profileId?.let { repository.hiddenChannelIds(it) }.orEmpty()
                 val availableIds = rawChannels.filterNot { it.id in hiddenChannelIds }
                     .mapTo(mutableSetOf(), Channel::id)
@@ -181,21 +182,30 @@ class TvViewModel(
                         .filterKeys { it in availableIds }
                         .mapValues { (_, channelPrograms) -> channelPrograms.sortedBy(Program::startsAt) }
                 }
-                mutableState.value = mutableState.value.copy(programsByChannel = indexedPrograms)
-                // If the guide is open while data lands, the stored programme index
-                // may point into a differently sized list (e.g. opened before the
-                // cache was indexed). Re-derive it from the time anchor so the
-                // selection stays on the right programme and ←/→ keep working.
-                val snapshot = mutableState.value
-                if (snapshot.overlay == Overlay.GUIDE) {
-                    mutableState.value = snapshot.copy(
-                        guideProgramIndex = guideProgramIndexAt(
-                            guideChannels(snapshot),
-                            snapshot.guideChannelIndex,
-                            snapshot.guideAnchor ?: Instant.now(),
-                        ),
+                var updated = previous.copy(programsByChannel = indexedPrograms)
+                if (previous.overlay == Overlay.GUIDE) {
+                    val channels = guideChannels(updated)
+                    val channelId = channels.getOrNull(previous.guideChannelIndex)?.id
+                    val previouslySelected = channelId?.let { previous.programsByChannel[it] }
+                        ?.getOrNull(previous.guideProgramIndex)
+                    val updatedChannelPrograms = channelId?.let(indexedPrograms::get).orEmpty()
+                    val preservedIndex = previouslySelected?.let { selected ->
+                        updatedChannelPrograms.indexOfFirst { candidate ->
+                            candidate.id == selected.id || candidate.sameScheduleSlot(selected)
+                        }
+                    } ?: -1
+                    updated = updated.copy(
+                        guideProgramIndex = if (preservedIndex >= 0) preservedIndex else {
+                            guideProgramIndexAt(
+                                channels,
+                                previous.guideChannelIndex,
+                                previous.guideAnchor ?: Instant.now(),
+                                indexedPrograms,
+                            )
+                        },
                     )
                 }
+                mutableState.value = updated
             }
         }
     }
@@ -1116,9 +1126,14 @@ class TvViewModel(
         }
     }
 
-    private fun guideProgramIndexAt(channels: List<Channel>, channelIndex: Int, anchor: Instant): Int {
+    private fun guideProgramIndexAt(
+        channels: List<Channel>,
+        channelIndex: Int,
+        anchor: Instant,
+        programsByChannel: Map<String, List<Program>> = mutableState.value.programsByChannel,
+    ): Int {
         val channelId = channels.getOrNull(channelIndex)?.id ?: return 0
-        val programs = mutableState.value.programsByChannel[channelId].orEmpty()
+        val programs = programsByChannel[channelId].orEmpty()
         val current = programs.indexOfFirst { !anchor.isBefore(it.startsAt) && anchor.isBefore(it.endsAt) }
         if (current >= 0) return current
         val next = programs.indexOfFirst { !it.startsAt.isBefore(anchor) }
@@ -1230,16 +1245,17 @@ class TvViewModel(
                 val previousSessionId = activeTicket?.playbackSessionId
                 activeTicket = null
                 repository.closePlayback(previousSessionId)
-                repository.catchupTicket(profileId, program.id).also {
+                val (resolvedProgram, ticket) = catchupTicketWithRefresh(profileId, program)
+                ticket.also {
                     activeTicket = it
                     scheduleProlong(it)
-                    pendingChannelId = program.channelId
+                    pendingChannelId = resolvedProgram.channelId
                     retryCount = 0
                     val channelName = mutableState.value.channels
-                        .firstOrNull { channel -> channel.id == program.channelId }
+                        .firstOrNull { channel -> channel.id == resolvedProgram.channelId }
                         ?.name ?: "Go3 TV+"
-                    mutableState.value = mutableState.value.copy(catchupProgram = program)
-                    tvPlayer.play(it, channelName, program.title)
+                    mutableState.value = mutableState.value.copy(catchupProgram = resolvedProgram)
+                    tvPlayer.play(it, channelName, resolvedProgram.title)
                 }
             } catch (error: Exception) {
                 showError(error)
@@ -1248,6 +1264,35 @@ class TvViewModel(
             }
         }
     }
+
+    private suspend fun catchupTicketWithRefresh(
+        profileId: String,
+        requestedProgram: Program,
+    ): Pair<Program, PlaybackTicket> {
+        try {
+            return requestedProgram to repository.catchupTicket(profileId, requestedProgram.id)
+        } catch (error: Go3Failure.HttpStatus) {
+            if (error.statusCode != 404) throw error
+        }
+
+        val refreshedPrograms = repository.refreshPrograms(profileId)
+        val refreshedProgram = ProgramWindow.deduplicateSchedule(refreshedPrograms)
+            .lastOrNull { it.sameScheduleSlot(requestedProgram) }
+            ?: requestedProgram
+        delay(500L)
+        return try {
+            refreshedProgram to repository.catchupTicket(profileId, refreshedProgram.id)
+        } catch (error: Go3Failure.HttpStatus) {
+            if (error.statusCode != 404) throw error
+            throw Go3Failure.Unavailable(
+                "Saate salvestus pole veel valmis. Proovi mõne hetke pärast uuesti.",
+                error,
+            )
+        }
+    }
+
+    private fun Program.sameScheduleSlot(other: Program): Boolean =
+        channelId == other.channelId && startsAt == other.startsAt && endsAt == other.endsAt
 
     override fun onReady() {
         pendingChannelId?.let { id ->

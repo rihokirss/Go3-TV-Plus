@@ -84,5 +84,6 @@ sealed class Go3Failure(message: String, cause: Throwable? = null) : Exception(m
     class StreamLimit : Go3Failure("Kaks samaaegset Go3 striimi on juba kasutusel.")
     class NotEntitled : Go3Failure("See kanal ei kuulu sinu paketti.")
     class GeoBlocked : Go3Failure("Sisu ei ole selles asukohas saadaval.")
-    class Unavailable(message: String, cause: Throwable? = null) : Go3Failure(message, cause)
+    open class Unavailable(message: String, cause: Throwable? = null) : Go3Failure(message, cause)
+    class HttpStatus(val statusCode: Int) : Unavailable("Go3 päring ebaõnnestus (HTTP $statusCode)")
 }

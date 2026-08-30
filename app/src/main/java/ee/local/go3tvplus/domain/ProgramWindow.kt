@@ -57,4 +57,18 @@ object ProgramWindow {
             }
             .toList()
     }
+
+    fun deduplicateSchedule(programs: List<Program>): List<Program> {
+        val latestBySlot = LinkedHashMap<ScheduleSlot, Program>()
+        programs.forEach { program ->
+            latestBySlot[ScheduleSlot(program.channelId, program.startsAt, program.endsAt)] = program
+        }
+        return latestBySlot.values.sortedWith(compareBy(Program::channelId, Program::startsAt))
+    }
+
+    private data class ScheduleSlot(
+        val channelId: String,
+        val startsAt: Instant,
+        val endsAt: Instant,
+    )
 }

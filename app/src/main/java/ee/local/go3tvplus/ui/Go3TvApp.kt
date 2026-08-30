@@ -323,7 +323,12 @@ private fun SeekOverlay(state: TvUiState) {
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f),
                 )
-                Text(if (state.seekPlaying) "MÄNGIB" else "PAUS", color = Go3Colors.TextSecondary, fontSize = 13.sp)
+                Text(
+                    if (state.seekPlaying) "▶" else "Ⅱ",
+                    color = if (state.seekPlaying) Go3Colors.Cyan else Color.White,
+                    fontSize = 21.sp,
+                    fontWeight = FontWeight.Bold,
+                )
             }
             Text(
                 program?.title ?: "Ajanihe",
@@ -410,7 +415,7 @@ private fun ChannelRail(state: TvUiState) {
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    if (state.favoritesOnly) "←  ★ Lemmikud" else "←  ☆ Näita lemmikuid",
+                    if (state.favoritesOnly) "◀  ★ Lemmikud" else "◀  ☆ Näita lemmikuid",
                     modifier = Modifier
                         .background(
                             if (state.favoritesOnly) Go3Colors.Accent else Go3Colors.ChipIdle,
@@ -424,7 +429,7 @@ private fun ChannelRail(state: TvUiState) {
             }
             if (railChannels.isEmpty()) {
                 Text("Lemmikkanaleid pole veel valitud", color = Color.White, fontSize = 18.sp)
-                Text("Lisa lemmik täisekraanil ← seadistusest", color = Go3Colors.TextSecondary, fontSize = 14.sp)
+                Text("Lisa lemmik täisekraanil ◀ seadistusest", color = Go3Colors.TextSecondary, fontSize = 14.sp)
             }
             visible.forEachIndexed { offset, channel ->
                 val index = first + offset

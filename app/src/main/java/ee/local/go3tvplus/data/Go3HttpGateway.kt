@@ -469,7 +469,7 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
             "ITEM_NOT_PAID" in marker || "ITEM_NOT_AVAILABLE" in marker || raw.code == 402 -> Go3Failure.NotEntitled()
             "GEOIP" in marker || "INVALID_REGION" in marker -> Go3Failure.GeoBlocked()
             raw.looksLikeHtml -> Go3Failure.Unavailable("Go3 turvakontroll blokeeris päringu (HTTP ${raw.code})")
-            else -> Go3Failure.Unavailable("Go3 päring ebaõnnestus (HTTP ${raw.code})")
+            else -> Go3Failure.HttpStatus(raw.code)
         }
     }
 

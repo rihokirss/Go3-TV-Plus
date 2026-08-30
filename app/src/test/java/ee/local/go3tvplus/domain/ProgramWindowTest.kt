@@ -87,6 +87,17 @@ class ProgramWindowTest {
         assertEquals(listOf(0.25f, 0.5f), fractions)
     }
 
+    @Test fun duplicateScheduleSlotsKeepTheLatestPlaybackId() {
+        val start = Instant.parse("2026-08-30T16:00:00Z")
+        val old = program(start, start.plusSeconds(3_600))
+        val fresh = old.copy(id = "fresh-recording-id", catchupAvailable = true)
+        val next = program(start.plusSeconds(3_600), start.plusSeconds(7_200)).copy(id = "next")
+
+        val deduplicated = ProgramWindow.deduplicateSchedule(listOf(old, fresh, next))
+
+        assertEquals(listOf("fresh-recording-id", "next"), deduplicated.map(Program::id))
+    }
+
     private fun program(start: Instant, end: Instant) = Program(
         id = "p",
         channelId = "c",

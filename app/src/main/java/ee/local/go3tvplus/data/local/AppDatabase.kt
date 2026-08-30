@@ -55,6 +55,9 @@ interface TvDao {
 
     @Query("DELETE FROM programs WHERE endsAtEpochMs < :beforeMs")
     suspend fun prunePrograms(beforeMs: Long)
+
+    @Query("DELETE FROM programs")
+    suspend fun clearPrograms()
 }
 
 @Database(entities = [ChannelEntity::class, ProgramEntity::class], version = 1, exportSchema = true)
@@ -84,4 +87,3 @@ fun ProgramEntity.toDomain() = Program(
 fun Program.toEntity() = ProgramEntity(
     id, channelId, title, description, startsAt.toEpochMilli(), endsAt.toEpochMilli(), catchupAvailable,
 )
-
