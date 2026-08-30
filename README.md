@@ -34,9 +34,19 @@ Samsung Tizeni ja LG webOS-i jaoks see APK ei sobi. Need platvormid vajavad eral
 
 Ava GitHubi lehel [Releases](https://github.com/rihokirss/Go3-TV-Plus/releases/latest) ja laadi alla `Go3-TV-Plus-<versioon>.apk`.
 
-### 2. Paigalda telerisse
+### 2. Paigalda mälupulgalt
 
-Lihtsaimad võimalused on kopeerida APK mälupulgale või saata see telerisse failiedastusrakendusega. Ava APK teleri failihalduris ja luba küsimise korral sellel rakendusel tundmatuid rakendusi paigaldada.
+Järgmised sammud eeldavad, et teleris on juba rakendus, millega saab mälupulgal olevaid faile sirvida.
+
+1. Kopeeri allalaaditud `Go3-TV-Plus-<versioon>.apk` arvutis mälupulga juurkausta, et seda oleks teleris lihtne leida.
+2. Eemalda mälupulk arvutist turvaliselt ja ühenda see teleri USB-pessa.
+3. Ava teleris failibrauser ning vali USB-mäluseade.
+4. Leia kopeeritud APK ja vajuta puldil `OK`.
+5. Kui Android paigaldamise blokeerib, vali kuvatud `Seaded` ning luba sellel failibrauseril tundmatuid rakendusi installida.
+6. Mine failibrauserisse tagasi, ava APK uuesti ja vali `Installi`.
+7. Pärast paigaldamist vali `Ava` või käivita **Go3 TV+** teleri rakenduste nimekirjast.
+
+FAT32-vormingus mälupulk töötab Android TV seadmetega üldjuhul kõige kindlamalt. Kui teler APK-d ei näita, vali failibrauseris kõigi failide kuvamine või proovi teist USB-pesa.
 
 Google TV-s asub vastav luba tavaliselt menüüs:
 
@@ -44,9 +54,9 @@ Google TV-s asub vastav luba tavaliselt menüüs:
 Seaded → Rakendused → Erijuurdepääs → Tundmatute rakenduste installimine
 ```
 
-Menüü täpne nimi sõltub teleri tootjast ja Androidi versioonist.
+Menüü täpne nimi sõltub teleri tootjast ja Androidi versioonist. Pärast paigaldamist võib tundmatute rakenduste loa soovi korral uuesti välja lülitada.
 
-### Paigaldamine ADB-ga
+### Alternatiiv: paigaldamine ADB-ga
 
 Luba teleris arendaja valikud ja Wireless debugging, ühenda arvuti teleriga ning käivita:
 
