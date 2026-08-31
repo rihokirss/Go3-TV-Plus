@@ -12,8 +12,8 @@ android {
         applicationId = "ee.local.go3tvplus"
         minSdk = 28
         targetSdk = 35
-        versionCode = 34
-        versionName = "0.4.27"
+        versionCode = 35
+        versionName = "0.4.28"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -102,6 +102,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     implementation("com.squareup.okhttp3:okhttp:5.5.0")
     implementation("com.google.zxing:core:3.5.4")
+    implementation("com.airbnb.android:lottie-compose:6.7.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")

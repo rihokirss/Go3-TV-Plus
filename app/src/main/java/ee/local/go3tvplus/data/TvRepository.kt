@@ -14,6 +14,7 @@ import ee.local.go3tvplus.domain.PlaybackTicket
 import ee.local.go3tvplus.domain.Profile
 import ee.local.go3tvplus.domain.Program
 import ee.local.go3tvplus.domain.ProgramWindow
+import ee.local.go3tvplus.domain.WeatherLocation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
@@ -29,6 +30,7 @@ class TvRepository(
     private val auth: AuthCoordinator,
     private val database: AppDatabase,
     private val preferences: TvPreferences,
+    private val weatherGateway: OpenMeteoWeatherGateway,
 ) {
     val channels: Flow<List<Channel>> = database.tvDao().observeChannels().map { rows -> rows.map { it.toDomain() } }
     val programs: Flow<List<Program>> = database.tvDao()
@@ -82,6 +84,34 @@ class TvRepository(
         return freshPrograms
     }
 
+    /** Refresh only the selected schedule slot when Go3 has assigned its recording ID after broadcast start. */
+    suspend fun refreshProgramSlot(profileId: String, program: Program): List<Program> {
+        val token = auth.validTokens().accessToken
+        val freshPrograms = try {
+            withTransientRetry(listOf(1_000L, 3_000L)) {
+                withContext(Dispatchers.Default) {
+                    gateway.programs(
+                        token,
+                        profileId,
+                        program.startsAt.minus(Duration.ofMinutes(15)),
+                        program.endsAt.plus(Duration.ofMinutes(15)),
+                    )
+                }
+            }
+        } catch (error: Exception) {
+            throw Go3Failure.Unavailable("Saate andmete uuendamine: ${error.message ?: "tundmatu viga"}", error)
+        }
+        database.withTransaction {
+            database.tvDao().deleteProgramSlot(
+                program.channelId,
+                program.startsAt.toEpochMilli(),
+                program.endsAt.toEpochMilli(),
+            )
+            database.tvDao().replacePrograms(freshPrograms.map(Program::toEntity))
+        }
+        return freshPrograms
+    }
+
     private suspend fun <T> withTransientRetry(
         retryDelaysMs: List<Long>,
         block: suspend () -> T,
@@ -118,9 +148,19 @@ class TvRepository(
     suspend fun saveSelectedProfile(id: String) = preferences.saveSelectedProfile(id)
     suspend fun playbackPreferences() = preferences.playbackPreferencesNow()
     suspend fun showClock() = preferences.showClockNow()
+    suspend fun channelInfoSeconds() = preferences.channelInfoSecondsNow()
+    suspend fun seekOverlaySeconds() = preferences.seekOverlaySecondsNow()
+    suspend fun seekStepSeconds() = preferences.seekStepSecondsNow()
     suspend fun savePreferredAudio(language: String) = preferences.savePreferredAudio(language)
     suspend fun savePreferredSubtitle(language: String?) = preferences.savePreferredSubtitle(language)
     suspend fun saveShowClock(show: Boolean) = preferences.saveShowClock(show)
+    suspend fun saveChannelInfoSeconds(seconds: Int) = preferences.saveChannelInfoSeconds(seconds)
+    suspend fun saveSeekOverlaySeconds(seconds: Int) = preferences.saveSeekOverlaySeconds(seconds)
+    suspend fun saveSeekStepSeconds(seconds: Int) = preferences.saveSeekStepSeconds(seconds)
+    suspend fun weatherLocation() = preferences.weatherLocationNow()
+    suspend fun saveWeatherLocation(location: WeatherLocation) = preferences.saveWeatherLocation(location)
+    suspend fun searchWeatherLocations(query: String) = weatherGateway.searchLocations(query)
+    suspend fun weatherForecast(location: WeatherLocation) = weatherGateway.forecast(location)
     suspend fun scheduledProgramActions() = preferences.scheduledProgramActionsNow()
     suspend fun saveScheduledProgramActions(actions: Collection<ScheduledProgramAction>) =
         preferences.saveScheduledProgramActions(actions)

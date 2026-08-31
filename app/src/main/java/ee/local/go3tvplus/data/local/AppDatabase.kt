@@ -50,6 +50,12 @@ interface TvDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun replacePrograms(programs: List<ProgramEntity>)
 
+    @Query(
+        "DELETE FROM programs WHERE channelId = :channelId AND " +
+            "startsAtEpochMs = :startsAtMs AND endsAtEpochMs = :endsAtMs",
+    )
+    suspend fun deleteProgramSlot(channelId: String, startsAtMs: Long, endsAtMs: Long)
+
     @Query("DELETE FROM channels")
     suspend fun clearChannels()
 

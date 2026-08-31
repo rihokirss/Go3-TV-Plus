@@ -17,6 +17,7 @@ Mitteametlik Android TV klient kiireks ja puldisõbralikuks Go3 otse-TV vaatamis
 - kanaliteülene heli- ja subtiitrikeele eelistus;
 - Go3 vaatamisprofiilid ning turvaline QR-/seadmekoodiga sidumine;
 - Android MediaSessioni tugi, et telefon ja süsteem näitaksid kanalit ning saadet;
+- täisekraanil avatav ilmateade hetke-, tunni- ja nelja päeva prognoosiga;
 - serveripoolse vaatamisseansi korrektne sulgemine kanali vahetamisel, rakendusest väljumisel ja unerežiimis.
 
 ## Nõuded
@@ -62,7 +63,7 @@ Luba teleris arendaja valikud ja Wireless debugging, ühenda arvuti teleriga nin
 
 ```bash
 adb connect TELERI_IP:ADB_PORT
-adb install -r Go3-TV-Plus-0.4.26.apk
+adb install -r Go3-TV-Plus-<versioon>.apk
 ```
 
 `-r` uuendab olemasolevat rakendust ja jätab sidumise ning seaded alles. Kui Android kuvab `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, on sama paketiga rakendus allkirjastatud teise võtmega. Vana rakenduse eemaldamine lahendab konflikti, kuid kustutab selle kohalikud seaded ja konto sidumise.
@@ -93,11 +94,15 @@ Parooli rakendusse ei sisestata ega salvestata. Tokenid hoitakse Android Keystor
 | EPG-s `kollane` | Lisa või eemalda saate meeldetuletus |
 | EPG-s `sinine` | Lisa või eemalda automaatne kanalile lülitumine |
 | Täisekraanil `sinine` | Lülita kell sisse või välja; valik jäetakse meelde |
+| Täisekraanil `kollane` | Ava ilmateade; `kollane` või `BACK` sulgeb selle |
 | `GUIDE / MENU` | Ava EPG, kui puldil vastav nupp leidub |
 | `1–9`, seejärel `0–9` | Sisesta 1–3-kohaline kanalinumber; häälestus pärast sisestuspausi |
 | `0` eraldi | Vaheta eelmisele kanalile; korduv vajutus lülitab kahe viimase kanali vahel |
 | `BACK` | Sulge esmalt aktiivne kiht, seejärel rakendus |
 | `HOME` | Peata taasesitus ja sulge Go3 serveriseanss |
+
+Ilmateate vaikimisi asukoht on Suurupi. Seda saab muuta menüüst
+`Seaded → Ilm`; asukoha otsing ja prognoos kasutavad Open-Meteo teenust.
 
 ## TCL-i Prime Video ja Sony Netflixi nupp
 

@@ -4,6 +4,7 @@ import android.app.Application
 import ee.local.go3tvplus.data.AuthCoordinator
 import ee.local.go3tvplus.data.DemoGo3Gateway
 import ee.local.go3tvplus.data.Go3HttpGateway
+import ee.local.go3tvplus.data.OpenMeteoWeatherGateway
 import ee.local.go3tvplus.data.TvRepository
 import ee.local.go3tvplus.data.local.AppDatabase
 import ee.local.go3tvplus.data.local.KeystoreTokenStore
@@ -25,7 +26,7 @@ class TvApplication : Application() {
         val auth = AuthCoordinator(gateway, KeystoreTokenStore(this), scope)
         container = AppContainer(
             auth = auth,
-            repository = TvRepository(gateway, auth, database, preferences),
+            repository = TvRepository(gateway, auth, database, preferences, OpenMeteoWeatherGateway()),
             isDemo = BuildConfig.DEMO_MODE,
         )
     }

@@ -17,6 +17,8 @@ import ee.local.go3tvplus.domain.PlaybackTicket
 import ee.local.go3tvplus.domain.Profile
 import ee.local.go3tvplus.domain.Program
 import ee.local.go3tvplus.domain.ProgramWindow
+import ee.local.go3tvplus.domain.WeatherForecast
+import ee.local.go3tvplus.domain.WeatherLocation
 import ee.local.go3tvplus.player.TvPlayer
 import ee.local.go3tvplus.player.SeekSnapshot
 import kotlinx.coroutines.CancellationException
@@ -44,7 +46,7 @@ import java.time.ZoneId
 
 enum class Overlay {
     NONE, CHANNEL_RAIL, GUIDE, APP_SETTINGS, CHANNEL_SETTINGS, PROFILE_SETTINGS,
-    AUDIO_SETTINGS, SUBTITLE_SETTINGS, DISPLAY_SETTINGS, SEEK,
+    AUDIO_SETTINGS, SUBTITLE_SETTINGS, DISPLAY_SETTINGS, WEATHER_LOCATION, WEATHER, SEEK,
 }
 
 data class TvUiState(
@@ -74,6 +76,16 @@ data class TvUiState(
     val audioTrackLabel: String = "Eesti",
     val subtitleTrackLabel: String = "Väljas",
     val showClock: Boolean = false,
+    val channelInfoSeconds: Int = 5,
+    val seekOverlaySeconds: Int = 10,
+    val seekStepSeconds: Int = 10,
+    val weatherLocation: WeatherLocation? = null,
+    val weatherForecast: WeatherForecast? = null,
+    val weatherLoading: Boolean = false,
+    val weatherError: String? = null,
+    val weatherSearchQuery: String = "",
+    val weatherSearchResults: List<WeatherLocation> = emptyList(),
+    val weatherSearchIndex: Int = 0,
     val favoriteChannelIds: Set<String> = emptySet(),
     val numberInput: String = "",
     /** Set while a catchup stream plays, so overlays show the right programme. */
@@ -118,6 +130,7 @@ class TvViewModel(
     private var noticeJob: Job? = null
     private var activeTicket: PlaybackTicket? = null
     private var pendingChannelId: String? = null
+    private var pendingSeekOverlayChannelId: String? = null
     private var retryCount = 0
     private var wasBackgrounded = false
     private var manuallyTimeShifted = false
@@ -133,6 +146,9 @@ class TvViewModel(
         viewModelScope.launch {
             val playbackPreferences = repository.playbackPreferences()
             val showClock = repository.showClock()
+            val channelInfoSeconds = DisplaySettingOptions.validChannelInfoSeconds(repository.channelInfoSeconds())
+            val seekOverlaySeconds = DisplaySettingOptions.validSeekOverlaySeconds(repository.seekOverlaySeconds())
+            val seekStepSeconds = DisplaySettingOptions.validSeekStepSeconds(repository.seekStepSeconds())
             tvPlayer.applyTrackPreferences(
                 playbackPreferences.audioLanguage,
                 playbackPreferences.subtitleLanguage,
@@ -143,7 +159,16 @@ class TvViewModel(
                 audioTrackLabel = tvPlayer.audioTrackLabel(),
                 subtitleTrackLabel = tvPlayer.subtitleTrackLabel(),
                 showClock = showClock,
+                channelInfoSeconds = channelInfoSeconds,
+                seekOverlaySeconds = seekOverlaySeconds,
+                seekStepSeconds = seekStepSeconds,
             )
+        }
+        viewModelScope.launch {
+            repository.weatherLocation()?.let { location ->
+                mutableState.value = mutableState.value.copy(weatherLocation = location)
+                refreshWeather(location)
+            }
         }
         programActionJob = viewModelScope.launch {
             val now = System.currentTimeMillis()
@@ -333,6 +358,17 @@ class TvViewModel(
             }
             return true
         }
+        if (snapshot.overlay == Overlay.WEATHER && event.keyCode == KeyEvent.KEYCODE_PROG_YELLOW) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) closeWeather()
+            return true
+        }
+        if (
+            event.keyCode == KeyEvent.KEYCODE_PROG_YELLOW &&
+            snapshot.overlay == Overlay.NONE && snapshot.numberInput.isEmpty() && snapshot.currentChannelId != null
+        ) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) openWeather()
+            return true
+        }
         if (
             event.keyCode == KeyEvent.KEYCODE_PROG_BLUE &&
             snapshot.overlay == Overlay.NONE &&
@@ -377,7 +413,8 @@ class TvViewModel(
                 val returnOverlay = if (
                     snapshot.overlay == Overlay.CHANNEL_SETTINGS || snapshot.overlay == Overlay.PROFILE_SETTINGS ||
                     snapshot.overlay == Overlay.AUDIO_SETTINGS || snapshot.overlay == Overlay.SUBTITLE_SETTINGS ||
-                    snapshot.overlay == Overlay.DISPLAY_SETTINGS
+                    snapshot.overlay == Overlay.DISPLAY_SETTINGS || snapshot.overlay == Overlay.WEATHER_LOCATION ||
+                    snapshot.overlay == Overlay.WEATHER
                 ) snapshot.settingsReturnOverlay else Overlay.NONE
                 mutableState.value = snapshot.copy(overlay = returnOverlay, numberInput = "")
                 return true
@@ -407,6 +444,8 @@ class TvViewModel(
             Overlay.AUDIO_SETTINGS -> handleAudioSettingsKey(event.keyCode)
             Overlay.SUBTITLE_SETTINGS -> handleSubtitleSettingsKey(event.keyCode)
             Overlay.DISPLAY_SETTINGS -> handleDisplaySettingsKey(event.keyCode)
+            Overlay.WEATHER_LOCATION -> handleWeatherLocationKey(event.keyCode)
+            Overlay.WEATHER -> true
             Overlay.SEEK -> handleSeekKey(event.keyCode)
             Overlay.NONE -> handlePlayerKey(event.keyCode)
         }
@@ -455,7 +494,7 @@ class TvViewModel(
             true
         }
         KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND -> {
-            val next = tvPlayer.seekBy(-30_000L)
+            val next = tvPlayer.seekBy(-mutableState.value.seekStepSeconds * 1_000L)
             if (next.isLive) manuallyTimeShifted = true
             updateSeekState(next, Overlay.SEEK)
             scheduleSeekClose()
@@ -463,7 +502,7 @@ class TvViewModel(
         }
         KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
             val before = tvPlayer.seekSnapshot()
-            val next = tvPlayer.seekBy(30_000L)
+            val next = tvPlayer.seekBy(mutableState.value.seekStepSeconds * 1_000L)
             if (before.isLive) {
                 manuallyTimeShifted = (next.liveOffsetMs ?: Long.MAX_VALUE) > 5_000L
             }
@@ -490,17 +529,32 @@ class TvViewModel(
         val channelId = snapshot.currentChannelId ?: return
         val playbackInstant = Instant.now().minusMillis(snapshot.seekLiveOffsetMs?.coerceAtLeast(0L) ?: 0L)
         val program = nowProgram(channelId, playbackInstant)
-        if (program == null || !program.catchupAvailable) {
+        if (program == null) {
             showNotice("Seda saadet ei saa algusest alustada")
+            return
+        }
+        val liveRewindMs = StartOverResolver.liveRewindMs(
+            seekPositionMs = snapshot.seekPositionMs,
+            programStartsAt = program.startsAt,
+            playbackInstant = playbackInstant,
+        )
+        if (liveRewindMs != null) {
+            manuallyTimeShifted = true
+            updateSeekState(tvPlayer.seekBy(liveRewindMs), Overlay.SEEK)
+            scheduleSeekClose()
+            return
+        }
+        if (!program.catchupAvailable) {
+            showNotice("Saate algus pole enam ajapuhvris")
             return
         }
         playCatchup(program)
     }
 
-    private fun toggleClock() {
+    private fun toggleClock(showConfirmation: Boolean = true) {
         val show = !mutableState.value.showClock
         mutableState.value = mutableState.value.copy(showClock = show)
-        showNotice(if (show) "Kell sees" else "Kell väljas")
+        if (showConfirmation) showNotice(if (show) "Kell sees" else "Kell väljas", CLOCK_NOTICE_TIMEOUT_MS)
         viewModelScope.launch { repository.saveShowClock(show) }
     }
 
@@ -518,7 +572,7 @@ class TvViewModel(
     private fun scheduleSeekClose() {
         seekCloseJob?.cancel()
         seekCloseJob = viewModelScope.launch {
-            delay(SEEK_OVERLAY_TIMEOUT_MS)
+            delay(mutableState.value.seekOverlaySeconds * 1_000L)
             if (mutableState.value.overlay == Overlay.SEEK) {
                 mutableState.value = mutableState.value.copy(overlay = Overlay.NONE)
                 seekUiJob?.cancel()
@@ -718,11 +772,11 @@ class TvViewModel(
         }
     }
 
-    private fun showNotice(message: String) {
+    private fun showNotice(message: String, timeoutMs: Long = PROGRAM_NOTICE_TIMEOUT_MS) {
         mutableState.value = mutableState.value.copy(notice = message)
         noticeJob?.cancel()
         noticeJob = viewModelScope.launch {
-            delay(PROGRAM_NOTICE_TIMEOUT_MS)
+            delay(timeoutMs)
             if (mutableState.value.notice == message) {
                 mutableState.value = mutableState.value.copy(notice = null)
             }
@@ -879,14 +933,14 @@ class TvViewModel(
             showNotice("Eelmist kanalit pole veel")
             return
         }
-        val index = snapshot.channels.indexOfFirst { it.id == target.id }.coerceAtLeast(0)
+        railJob?.cancel()
+        seekUiJob?.cancel()
+        seekCloseJob?.cancel()
+        pendingSeekOverlayChannelId = target.id
         mutableState.value = snapshot.copy(
-            overlay = Overlay.CHANNEL_RAIL,
-            railIndex = index,
-            favoritesOnly = false,
+            overlay = Overlay.NONE,
             numberInput = "",
         )
-        scheduleRailClose()
         tune(target)
     }
 
@@ -939,7 +993,7 @@ class TvViewModel(
     private fun scheduleRailClose() {
         railJob?.cancel()
         railJob = viewModelScope.launch {
-            delay(CHANNEL_RAIL_TIMEOUT_MS)
+            delay(mutableState.value.channelInfoSeconds * 1_000L)
             if (mutableState.value.overlay == Overlay.CHANNEL_RAIL) {
                 mutableState.value = mutableState.value.copy(overlay = Overlay.NONE)
             }
@@ -985,7 +1039,7 @@ class TvViewModel(
         val snapshot = mutableState.value
         when (keyCode) {
             KeyEvent.KEYCODE_DPAD_UP -> mutableState.value = snapshot.copy(appSettingsIndex = (snapshot.appSettingsIndex - 1).coerceAtLeast(0))
-            KeyEvent.KEYCODE_DPAD_DOWN -> mutableState.value = snapshot.copy(appSettingsIndex = (snapshot.appSettingsIndex + 1).coerceAtMost(5))
+            KeyEvent.KEYCODE_DPAD_DOWN -> mutableState.value = snapshot.copy(appSettingsIndex = (snapshot.appSettingsIndex + 1).coerceAtMost(6))
             KeyEvent.KEYCODE_DPAD_RIGHT,
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                 when (snapshot.appSettingsIndex) {
@@ -994,7 +1048,8 @@ class TvViewModel(
                     2 -> openAudioSettings()
                     3 -> openSubtitleSettings()
                     4 -> openDisplaySettings()
-                    5 -> refreshChannelPackage()
+                    5 -> openWeatherLocationSettings(Overlay.APP_SETTINGS)
+                    6 -> refreshChannelPackage()
                 }
             }
             else -> return false
@@ -1126,17 +1181,165 @@ class TvViewModel(
     }
 
     private fun handleDisplaySettingsKey(keyCode: Int): Boolean = when (keyCode) {
-        KeyEvent.KEYCODE_DPAD_UP,
-        KeyEvent.KEYCODE_DPAD_DOWN -> true
-        KeyEvent.KEYCODE_DPAD_LEFT,
-        KeyEvent.KEYCODE_DPAD_RIGHT,
-        KeyEvent.KEYCODE_DPAD_CENTER,
-        KeyEvent.KEYCODE_ENTER,
-        KeyEvent.KEYCODE_NUMPAD_ENTER -> {
-            toggleClock()
+        KeyEvent.KEYCODE_DPAD_UP -> {
+            mutableState.value = mutableState.value.copy(
+                displaySettingsIndex = (mutableState.value.displaySettingsIndex - 1).coerceAtLeast(0),
+            )
+            true
+        }
+        KeyEvent.KEYCODE_DPAD_DOWN -> {
+            mutableState.value = mutableState.value.copy(
+                displaySettingsIndex = (mutableState.value.displaySettingsIndex + 1).coerceAtMost(3),
+            )
+            true
+        }
+        KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT,
+        KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+            val snapshot = mutableState.value
+            val direction = if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) -1 else 1
+            when (snapshot.displaySettingsIndex) {
+                0 -> toggleClock(showConfirmation = false)
+                1 -> {
+                    val seconds = DisplaySettingOptions.cycleChannelInfoSeconds(snapshot.channelInfoSeconds, direction)
+                    mutableState.value = snapshot.copy(channelInfoSeconds = seconds)
+                    viewModelScope.launch { repository.saveChannelInfoSeconds(seconds) }
+                }
+                2 -> {
+                    val seconds = DisplaySettingOptions.cycleSeekOverlaySeconds(snapshot.seekOverlaySeconds, direction)
+                    mutableState.value = snapshot.copy(seekOverlaySeconds = seconds)
+                    viewModelScope.launch { repository.saveSeekOverlaySeconds(seconds) }
+                }
+                3 -> {
+                    val seconds = DisplaySettingOptions.cycleSeekStepSeconds(snapshot.seekStepSeconds, direction)
+                    mutableState.value = snapshot.copy(seekStepSeconds = seconds)
+                    viewModelScope.launch { repository.saveSeekStepSeconds(seconds) }
+                }
+            }
             true
         }
         else -> false
+    }
+
+    private fun openWeather() {
+        val location = mutableState.value.weatherLocation
+        if (location == null) {
+            openWeatherLocationSettings(Overlay.NONE)
+            return
+        }
+        mutableState.value = mutableState.value.copy(
+            overlay = Overlay.WEATHER,
+            settingsReturnOverlay = Overlay.NONE,
+            weatherError = null,
+        )
+        val stale = mutableState.value.weatherForecast?.let {
+            Duration.between(it.fetchedAt, Instant.now()) > Duration.ofMinutes(15)
+        } != false
+        if (stale) refreshWeather(location)
+    }
+
+    private fun closeWeather() {
+        mutableState.value = mutableState.value.copy(
+            overlay = mutableState.value.settingsReturnOverlay,
+            weatherError = null,
+        )
+    }
+
+    private fun openWeatherLocationSettings(returnOverlay: Overlay) {
+        val location = mutableState.value.weatherLocation
+        mutableState.value = mutableState.value.copy(
+            overlay = Overlay.WEATHER_LOCATION,
+            settingsReturnOverlay = returnOverlay,
+            weatherSearchQuery = location?.name.orEmpty(),
+            weatherSearchResults = location?.let(::listOf).orEmpty(),
+            weatherSearchIndex = 0,
+            weatherError = null,
+        )
+    }
+
+    fun updateWeatherSearchQuery(query: String) {
+        mutableState.value = mutableState.value.copy(
+            weatherSearchQuery = query.take(50),
+            weatherSearchResults = emptyList(),
+            weatherSearchIndex = 0,
+            weatherError = null,
+        )
+    }
+
+    fun searchWeatherLocations() {
+        val query = mutableState.value.weatherSearchQuery.trim()
+        if (query.length < 2 || mutableState.value.weatherLoading) return
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(weatherLoading = true, weatherError = null)
+            runCatching { repository.searchWeatherLocations(query) }
+                .onSuccess { results ->
+                    mutableState.value = mutableState.value.copy(
+                        weatherLoading = false,
+                        weatherSearchResults = results,
+                        weatherSearchIndex = 0,
+                        weatherError = if (results.isEmpty()) "Asulat ei leitud" else null,
+                    )
+                }
+                .onFailure { error ->
+                    mutableState.value = mutableState.value.copy(
+                        weatherLoading = false,
+                        weatherError = "Asukoha otsing ebaõnnestus: ${error.message ?: "tundmatu viga"}",
+                    )
+                }
+        }
+    }
+
+    private fun handleWeatherLocationKey(keyCode: Int): Boolean {
+        val snapshot = mutableState.value
+        when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_UP -> mutableState.value = snapshot.copy(
+                weatherSearchIndex = (snapshot.weatherSearchIndex - 1).coerceAtLeast(0),
+            )
+            KeyEvent.KEYCODE_DPAD_DOWN -> mutableState.value = snapshot.copy(
+                weatherSearchIndex = (snapshot.weatherSearchIndex + 1)
+                    .coerceAtMost(snapshot.weatherSearchResults.lastIndex.coerceAtLeast(0)),
+            )
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                val selected = snapshot.weatherSearchResults.getOrNull(snapshot.weatherSearchIndex)
+                if (selected == null) searchWeatherLocations() else selectWeatherLocation(selected)
+            }
+            else -> return false
+        }
+        return true
+    }
+
+    private fun selectWeatherLocation(location: WeatherLocation) {
+        val returnOverlay = mutableState.value.settingsReturnOverlay
+        mutableState.value = mutableState.value.copy(
+            weatherLocation = location,
+            overlay = returnOverlay,
+            weatherSearchQuery = location.name,
+            weatherSearchResults = emptyList(),
+            weatherError = null,
+        )
+        viewModelScope.launch { repository.saveWeatherLocation(location) }
+        refreshWeather(location)
+    }
+
+    private fun refreshWeather(location: WeatherLocation) {
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(weatherLoading = true, weatherError = null)
+            runCatching { repository.weatherForecast(location) }
+                .onSuccess { forecast ->
+                    if (mutableState.value.weatherLocation == location) {
+                        mutableState.value = mutableState.value.copy(
+                            weatherForecast = forecast,
+                            weatherLoading = false,
+                            weatherError = null,
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    mutableState.value = mutableState.value.copy(
+                        weatherLoading = false,
+                        weatherError = "Ilma värskendamine ebaõnnestus: ${error.message ?: "tundmatu viga"}",
+                    )
+                }
+        }
     }
 
     private fun refreshChannelPackage() {
@@ -1258,6 +1461,9 @@ class TvViewModel(
         resetPlaybackRetry: Boolean = true,
     ) {
         val profileId = mutableState.value.selectedProfileId ?: return
+        if (pendingSeekOverlayChannelId != null && pendingSeekOverlayChannelId != channel.id) {
+            pendingSeekOverlayChannelId = null
+        }
         channelTuneJob?.cancel()
         channelTuneJob = null
         playbackRetryJob?.cancel()
@@ -1310,6 +1516,7 @@ class TvViewModel(
                 throw cancelled
             } catch (error: Exception) {
                 if (generation == tuneGeneration) {
+                    if (pendingSeekOverlayChannelId == channel.id) pendingSeekOverlayChannelId = null
                     if (error is Go3Failure.NotEntitled) {
                         hideUnavailableChannel(profileId, channel)
                     } else {
@@ -1385,9 +1592,8 @@ class TvViewModel(
             try {
                 manuallyTimeShifted = true
                 val previousSessionId = activeTicket?.playbackSessionId
-                activeTicket = null
-                repository.closePlayback(previousSessionId)
                 val (resolvedProgram, ticket) = catchupTicketWithRefresh(profileId, program)
+                repository.closePlayback(previousSessionId)
                 ticket.also {
                     activeTicket = it
                     scheduleProlong(it)
@@ -1417,7 +1623,7 @@ class TvViewModel(
             if (error.statusCode != 404) throw error
         }
 
-        val refreshedPrograms = repository.refreshPrograms(profileId)
+        val refreshedPrograms = repository.refreshProgramSlot(profileId, requestedProgram)
         val refreshedProgram = ProgramWindow.deduplicateSchedule(refreshedPrograms)
             .lastOrNull { it.sameScheduleSlot(requestedProgram) }
             ?: requestedProgram
@@ -1457,6 +1663,10 @@ class TvViewModel(
             loading = false,
             error = null,
         )
+        if (pendingSeekOverlayChannelId == mutableState.value.currentChannelId) {
+            pendingSeekOverlayChannelId = null
+            openSeekOverlay()
+        }
     }
 
     override fun onError(error: PlaybackException) {
@@ -1512,6 +1722,7 @@ class TvViewModel(
         tuneJob?.cancel()
         channelTuneJob?.cancel()
         channelTuneJob = null
+        pendingSeekOverlayChannelId = null
         tuneGeneration++
         prolongJob?.cancel()
         seekUiJob?.cancel()
@@ -1603,13 +1814,12 @@ class TvViewModel(
 }
 
 private const val STARTUP_REFRESH_DEFER_MS = 5_000L
-private const val CHANNEL_RAIL_TIMEOUT_MS = 5_000L
 private const val CHANNEL_TUNE_DEBOUNCE_MS = 180L
-private const val SEEK_OVERLAY_TIMEOUT_MS = 10_000L
 private const val PROGRAM_REMINDER_LEAD_MS = 60_000L
 private const val PROGRAM_ACTION_GRACE_MS = 5 * 60_000L
 private const val PROGRAM_ACTION_POLL_MS = 15_000L
-private const val PROGRAM_NOTICE_TIMEOUT_MS = 12_000L
+private const val PROGRAM_NOTICE_TIMEOUT_MS = 5_000L
+private const val CLOCK_NOTICE_TIMEOUT_MS = PROGRAM_NOTICE_TIMEOUT_MS
 private val PROGRAM_COLOR_KEYS = setOf(
     KeyEvent.KEYCODE_PROG_RED,
     KeyEvent.KEYCODE_PROG_GREEN,
@@ -1681,5 +1891,34 @@ internal object PreviousChannelResolver {
         currentChannelId
     } else {
         previousChannelId
+    }
+}
+
+internal object StartOverResolver {
+    fun liveRewindMs(
+        seekPositionMs: Long,
+        programStartsAt: Instant,
+        playbackInstant: Instant,
+    ): Long? {
+        val elapsedMs = Duration.between(programStartsAt, playbackInstant).toMillis()
+        return if (elapsedMs in 1..seekPositionMs.coerceAtLeast(0L)) -elapsedMs else null
+    }
+}
+
+internal object DisplaySettingOptions {
+    private val channelInfoSeconds = listOf(3, 5, 8)
+    private val seekOverlaySeconds = listOf(5, 10, 15)
+    private val seekStepSeconds = listOf(10, 30, 60)
+
+    fun validChannelInfoSeconds(value: Int): Int = value.takeIf(channelInfoSeconds::contains) ?: 5
+    fun validSeekOverlaySeconds(value: Int): Int = value.takeIf(seekOverlaySeconds::contains) ?: 10
+    fun validSeekStepSeconds(value: Int): Int = value.takeIf(seekStepSeconds::contains) ?: 10
+    fun cycleChannelInfoSeconds(current: Int, direction: Int): Int = cycle(channelInfoSeconds, current, direction)
+    fun cycleSeekOverlaySeconds(current: Int, direction: Int): Int = cycle(seekOverlaySeconds, current, direction)
+    fun cycleSeekStepSeconds(current: Int, direction: Int): Int = cycle(seekStepSeconds, current, direction)
+
+    private fun cycle(values: List<Int>, current: Int, direction: Int): Int {
+        val index = values.indexOf(current).takeIf { it >= 0 } ?: 0
+        return values[(index + if (direction < 0) -1 else 1).floorMod(values.size)]
     }
 }

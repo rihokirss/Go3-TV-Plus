@@ -10,6 +10,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import ee.local.go3tvplus.domain.WeatherLocation
 
 private val Context.tvDataStore by preferencesDataStore("tv_preferences")
 
@@ -39,6 +40,13 @@ class TvPreferences(private val context: Context) {
         val preferredAudio = stringPreferencesKey("preferred_audio")
         val preferredSubtitle = stringPreferencesKey("preferred_subtitle")
         val showClock = booleanPreferencesKey("show_clock")
+        val channelInfoSeconds = intPreferencesKey("channel_info_seconds")
+        val seekOverlaySeconds = intPreferencesKey("seek_overlay_seconds")
+        val seekStepSeconds = intPreferencesKey("seek_step_seconds")
+        val weatherLocationName = stringPreferencesKey("weather_location_name")
+        val weatherLocationArea = stringPreferencesKey("weather_location_area")
+        val weatherLatitude = stringPreferencesKey("weather_latitude")
+        val weatherLongitude = stringPreferencesKey("weather_longitude")
         val scheduledProgramActions = stringSetPreferencesKey("scheduled_program_actions")
     }
 
@@ -47,6 +55,9 @@ class TvPreferences(private val context: Context) {
     val preferredAudio: Flow<String> = context.tvDataStore.data.map { it[Keys.preferredAudio] ?: "et" }
     val preferredSubtitle: Flow<String?> = context.tvDataStore.data.map { it[Keys.preferredSubtitle] }
     val showClock: Flow<Boolean> = context.tvDataStore.data.map { it[Keys.showClock] ?: false }
+    val channelInfoSeconds: Flow<Int> = context.tvDataStore.data.map { it[Keys.channelInfoSeconds] ?: 5 }
+    val seekOverlaySeconds: Flow<Int> = context.tvDataStore.data.map { it[Keys.seekOverlaySeconds] ?: 10 }
+    val seekStepSeconds: Flow<Int> = context.tvDataStore.data.map { it[Keys.seekStepSeconds] ?: 10 }
 
     suspend fun lastChannelNow(): String? = lastChannel.first()
     suspend fun selectedProfileNow(): String? = selectedProfile.first()
@@ -54,11 +65,32 @@ class TvPreferences(private val context: Context) {
     suspend fun saveSelectedProfile(id: String) = context.tvDataStore.edit { it[Keys.selectedProfile] = id }
     suspend fun playbackPreferencesNow() = PlaybackPreferences(preferredAudio.first(), preferredSubtitle.first())
     suspend fun showClockNow(): Boolean = showClock.first()
+    suspend fun channelInfoSecondsNow(): Int = channelInfoSeconds.first()
+    suspend fun seekOverlaySecondsNow(): Int = seekOverlaySeconds.first()
+    suspend fun seekStepSecondsNow(): Int = seekStepSeconds.first()
     suspend fun savePreferredAudio(language: String) = context.tvDataStore.edit { it[Keys.preferredAudio] = language }
     suspend fun savePreferredSubtitle(language: String?) = context.tvDataStore.edit {
         if (language == null) it.remove(Keys.preferredSubtitle) else it[Keys.preferredSubtitle] = language
     }
     suspend fun saveShowClock(show: Boolean) = context.tvDataStore.edit { it[Keys.showClock] = show }
+    suspend fun saveChannelInfoSeconds(seconds: Int) = context.tvDataStore.edit { it[Keys.channelInfoSeconds] = seconds }
+    suspend fun saveSeekOverlaySeconds(seconds: Int) = context.tvDataStore.edit { it[Keys.seekOverlaySeconds] = seconds }
+    suspend fun saveSeekStepSeconds(seconds: Int) = context.tvDataStore.edit { it[Keys.seekStepSeconds] = seconds }
+
+    suspend fun weatherLocationNow(): WeatherLocation? {
+        val values = context.tvDataStore.data.first()
+        val name = values[Keys.weatherLocationName] ?: return DEFAULT_WEATHER_LOCATION
+        val latitude = values[Keys.weatherLatitude]?.toDoubleOrNull() ?: return DEFAULT_WEATHER_LOCATION
+        val longitude = values[Keys.weatherLongitude]?.toDoubleOrNull() ?: return DEFAULT_WEATHER_LOCATION
+        return WeatherLocation(name, values[Keys.weatherLocationArea], latitude, longitude)
+    }
+
+    suspend fun saveWeatherLocation(location: WeatherLocation) = context.tvDataStore.edit {
+        it[Keys.weatherLocationName] = location.name
+        if (location.area == null) it.remove(Keys.weatherLocationArea) else it[Keys.weatherLocationArea] = location.area
+        it[Keys.weatherLatitude] = location.latitude.toString()
+        it[Keys.weatherLongitude] = location.longitude.toString()
+    }
 
     suspend fun scheduledProgramActionsNow(): List<ScheduledProgramAction> =
         context.tvDataStore.data.first()[Keys.scheduledProgramActions].orEmpty()
@@ -122,6 +154,13 @@ class TvPreferences(private val context: Context) {
         }
     }
 }
+
+private val DEFAULT_WEATHER_LOCATION = WeatherLocation(
+    name = "Suurupi",
+    area = "Harku vald, Harju maakond",
+    latitude = 59.46255,
+    longitude = 24.39193,
+)
 
 internal fun encodeScheduledProgramAction(action: ScheduledProgramAction): String = listOf(
     action.programId,

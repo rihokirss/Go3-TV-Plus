@@ -11,6 +11,10 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -26,6 +30,9 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -43,13 +50,22 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import com.airbnb.lottie.compose.LottieAnimation
+import com.airbnb.lottie.compose.LottieCompositionSpec
+import com.airbnb.lottie.compose.LottieConstants
+import com.airbnb.lottie.compose.animateLottieCompositionAsState
+import com.airbnb.lottie.compose.rememberLottieComposition
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -59,10 +75,13 @@ import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import ee.local.go3tvplus.domain.Channel
+import ee.local.go3tvplus.domain.DailyWeather
 import ee.local.go3tvplus.domain.DeviceAuthState
 import ee.local.go3tvplus.domain.Profile
 import ee.local.go3tvplus.domain.Program
 import ee.local.go3tvplus.domain.ProgramWindow
+import ee.local.go3tvplus.domain.WeatherForecast
+import ee.local.go3tvplus.domain.WeatherLocation
 import ee.local.go3tvplus.R
 import kotlinx.coroutines.delay
 import java.time.Duration
@@ -70,6 +89,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @Composable
 fun Go3TvApp(viewModel: TvViewModel, player: Player) {
@@ -80,7 +100,12 @@ fun Go3TvApp(viewModel: TvViewModel, player: Player) {
                 state.auth != DeviceAuthState.Approved -> PairingScreen(state.auth, viewModel::startPairing)
                 state.selectedProfileId == null && state.profiles.isEmpty() -> StartupScreen()
                 state.selectedProfileId == null -> ProfileScreen(state.profiles, viewModel::selectProfile)
-                else -> PlayerScreen(state, player)
+                else -> PlayerScreen(
+                    state = state,
+                    player = player,
+                    onWeatherQueryChange = viewModel::updateWeatherSearchQuery,
+                    onWeatherSearch = viewModel::searchWeatherLocations,
+                )
             }
             if (state.isDemo) DemoBadge()
         }
@@ -207,7 +232,12 @@ private fun ProfileScreen(profiles: List<Profile>, onSelect: (Profile) -> Unit) 
 }
 
 @Composable
-private fun PlayerScreen(state: TvUiState, player: Player) {
+private fun PlayerScreen(
+    state: TvUiState,
+    player: Player,
+    onWeatherQueryChange: (String) -> Unit,
+    onWeatherSearch: () -> Unit,
+) {
     Box(Modifier.fillMaxSize()) {
         AndroidView(
             modifier = Modifier.fillMaxSize().focusable(),
@@ -249,6 +279,12 @@ private fun PlayerScreen(state: TvUiState, player: Player) {
                 activeLanguage = state.subtitleLanguagePreference,
             )
             Overlay.DISPLAY_SETTINGS -> DisplaySettingsOverlay(state)
+            Overlay.WEATHER_LOCATION -> WeatherLocationOverlay(
+                state = state,
+                onQueryChange = onWeatherQueryChange,
+                onSearch = onWeatherSearch,
+            )
+            Overlay.WEATHER -> WeatherOverlay(state)
             Overlay.SEEK -> SeekOverlay(state)
             Overlay.NONE -> Unit
         }
@@ -372,7 +408,10 @@ private fun SeekOverlay(state: TvUiState) {
         ?: Instant.now()
     val program = watching ?: state.programsFor(state.currentChannelId)
         .firstOrNull { ProgramWindow.isCurrent(it, playbackInstant) }
-    val canStartOver = watching == null && state.seekIsLive && program?.catchupAvailable == true
+    val canStartOver = watching == null && state.seekIsLive && program != null && (
+        StartOverResolver.liveRewindMs(state.seekPositionMs, program.startsAt, playbackInstant) != null ||
+            program.catchupAvailable
+        )
     val timelineStart = if (watching != null && !state.seekIsLive) {
         watching.startsAt
     } else {
@@ -475,9 +514,9 @@ private fun SeekOverlay(state: TvUiState) {
                 Text(formatPlaybackDuration(state.seekPositionMs), color = Color.White, fontSize = 14.sp)
                 Row(Modifier.weight(1f), horizontalArrangement = Arrangement.Center) {
                     if (canStartOver) {
-                        KeyHintRow("▲" to "algusest", "◀▶" to "30 s", "OK" to "esita/paus", "BACK" to "sulge")
+                        KeyHintRow("▲" to "algusest", "◀▶" to "${state.seekStepSeconds} s", "OK" to "esita/paus", "BACK" to "sulge")
                     } else {
-                        KeyHintRow("◀▶" to "30 s", "OK" to "esita/paus", "BACK" to "sulge")
+                        KeyHintRow("◀▶" to "${state.seekStepSeconds} s", "OK" to "esita/paus", "BACK" to "sulge")
                     }
                 }
                 Text(liveLabel, color = if (liveLabel == "OTSE") Go3Colors.Cyan else Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
@@ -976,9 +1015,25 @@ private fun AppSettingsOverlay(state: TvUiState) {
         "Kanalid" to "Lemmikud, numbrid ja järjekord",
         "Helirada" to "${state.audioTrackLabel} • kõigil kanalitel",
         "Subtiitrid" to "${state.subtitleTrackLabel} • kõigil kanalitel",
-        "Ekraan ja juhtimine" to "Kell ${if (state.showClock) "sees" else "väljas"} • puldi otseteed",
+        "Ekraan ja juhtimine" to
+            "Kell ${if (state.showClock) "sees" else "väljas"} • info ${state.channelInfoSeconds} s • kerimine ${state.seekStepSeconds} s",
+        "Ilm" to (state.weatherLocation?.let { "${it.name}${it.area?.let { area -> " • $area" }.orEmpty()}" }
+            ?: "Vali ilmateate asukoht"),
         "Värskenda kanalipaketti" to "Kontrolli Go3 tellimust ja peidetud kanaleid uuesti",
     )
+    val listState = rememberLazyListState()
+    LaunchedEffect(state.appSettingsIndex) {
+        val selectedIndex = state.appSettingsIndex.coerceIn(rows.indices)
+        val layout = listState.layoutInfo
+        val item = layout.visibleItemsInfo.firstOrNull { it.index == selectedIndex }
+        when {
+            item == null -> listState.animateScrollToItem(selectedIndex)
+            item.offset < layout.viewportStartOffset ->
+                listState.animateScrollBy((item.offset - layout.viewportStartOffset).toFloat())
+            item.offset + item.size > layout.viewportEndOffset ->
+                listState.animateScrollBy((item.offset + item.size - layout.viewportEndOffset).toFloat())
+        }
+    }
     Box(Modifier.fillMaxSize().background(Go3Colors.Scrim), contentAlignment = Alignment.CenterStart) {
         Column(
             Modifier.fillMaxHeight().width(760.dp)
@@ -986,51 +1041,385 @@ private fun AppSettingsOverlay(state: TvUiState) {
                 .padding(horizontal = 44.dp, vertical = 28.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            OverlayHeader(
-                "SEADED",
-                "Go3 TV+",
-                keyHints = listOf("▲▼" to "vali", "OK" to "ava/muuda", "BACK" to "sulge"),
-            )
+            Box(Modifier.fillMaxWidth()) {
+                OverlayHeader(
+                    "SEADED",
+                    "Go3 TV+",
+                    keyHints = listOf("▲▼" to "vali", "OK" to "ava/muuda", "BACK" to "sulge"),
+                )
+                Text(
+                    "v${ee.local.go3tvplus.BuildConfig.VERSION_NAME}",
+                    modifier = Modifier.align(Alignment.TopEnd),
+                    color = Go3Colors.TextFaint,
+                    fontSize = 12.sp,
+                )
+            }
             Spacer(Modifier.height(8.dp))
-            rows.forEachIndexed { index, (title, value) ->
-                val selected = index == state.appSettingsIndex
-                SettingsRow(selected, verticalPadding = 11.dp) {
-                    Column(Modifier.weight(1f)) {
-                        Text(title, color = Color.White, fontSize = 20.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold)
-                        Text(value, color = if (selected) Color.White else Go3Colors.TextSecondary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                state = listState,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(bottom = 14.dp),
+            ) {
+                itemsIndexed(rows) { index, (title, value) ->
+                    val selected = index == state.appSettingsIndex
+                    SettingsRow(selected, verticalPadding = 11.dp) {
+                        Column(Modifier.weight(1f)) {
+                            Text(title, color = Color.White, fontSize = 20.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold)
+                            Text(value, color = if (selected) Color.White else Go3Colors.TextSecondary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        Text("›", color = if (selected) Color.White else Go3Colors.TextFaint, fontSize = 30.sp)
                     }
-                    Text("›", color = if (selected) Color.White else Go3Colors.TextFaint, fontSize = 30.sp)
                 }
             }
-            Spacer(Modifier.weight(1f))
-            Text("Versioon ${ee.local.go3tvplus.BuildConfig.VERSION_NAME}", color = Go3Colors.TextFaint, fontSize = 13.sp)
         }
     }
 }
 
 @Composable
 private fun DisplaySettingsOverlay(state: TvUiState) {
-    CenteredMenuPanel {
+    CenteredMenuPanel(width = 760.dp) {
         OverlayHeader(
             "EKRAAN JA JUHTIMINE",
             "Vaatamisvaate eelistused",
             "Sinine nupp lülitab kella ka otse täisekraanvaates",
             keyHints = listOf("◀▶" to "muuda", "OK" to "muuda", "BACK" to "tagasi"),
         )
-        Spacer(Modifier.height(14.dp))
-        SettingsRow(selected = state.displaySettingsIndex == 0, verticalPadding = 15.dp) {
+        Spacer(Modifier.height(6.dp))
+        SettingsRow(selected = state.displaySettingsIndex == 0, verticalPadding = 8.dp) {
             Column(Modifier.weight(1f)) {
-                Text("Kell täisekraanil", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Text("Kuvab tagasihoidliku HH:mm kella video paremas ülanurgas", color = Go3Colors.TextSecondary, fontSize = 14.sp)
+                Text("Kell täisekraanil", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("Näita kellaaega video paremas ülanurgas", color = Go3Colors.TextSecondary, fontSize = 13.sp)
             }
-            Text(
-                if (state.showClock) "SEES" else "VÄLJAS",
-                color = if (state.showClock) Go3Colors.Cyan else Go3Colors.TextFaint,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-            )
+            SettingToggle(state.showClock)
+        }
+        SettingsRow(selected = state.displaySettingsIndex == 1, verticalPadding = 8.dp) {
+            Column(Modifier.weight(1f)) {
+                Text("Kanali- ja saateinfo", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("Kui kaua kanalipaneel ekraanile jääb", color = Go3Colors.TextSecondary, fontSize = 13.sp)
+            }
+            SettingValue("${state.channelInfoSeconds} s")
+        }
+        SettingsRow(selected = state.displaySettingsIndex == 2, verticalPadding = 8.dp) {
+            Column(Modifier.weight(1f)) {
+                Text("Kerimisriba kestus", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("Kui kaua ajaniheteave ekraanile jääb", color = Go3Colors.TextSecondary, fontSize = 13.sp)
+            }
+            SettingValue("${state.seekOverlaySeconds} s")
+        }
+        SettingsRow(selected = state.displaySettingsIndex == 3, verticalPadding = 8.dp) {
+            Column(Modifier.weight(1f)) {
+                Text("Kerimissamm", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("Vasaku ja parema noole hüppe pikkus", color = Go3Colors.TextSecondary, fontSize = 13.sp)
+            }
+            SettingValue("${state.seekStepSeconds} s")
         }
     }
+}
+
+@Composable
+private fun WeatherLocationOverlay(
+    state: TvUiState,
+    onQueryChange: (String) -> Unit,
+    onSearch: () -> Unit,
+) {
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) {
+        delay(250)
+        focusRequester.requestFocus()
+        keyboard?.show()
+    }
+    CenteredMenuPanel(width = 760.dp) {
+        OverlayHeader(
+            "ILMA ASUKOHT",
+            "Otsi asulat",
+            "Valik salvestatakse sellesse telerisse",
+            keyHints = listOf("▲▼" to "vali", "OK" to "kinnita/otsi", "BACK" to "tagasi"),
+        )
+        Spacer(Modifier.height(6.dp))
+        BasicTextField(
+            value = state.weatherSearchQuery,
+            onValueChange = onQueryChange,
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(focusRequester)
+                .background(Go3Colors.RowIdle, RoundedCornerShape(Go3Radii.M))
+                .border(1.dp, Go3Colors.Cyan.copy(alpha = 0.65f), RoundedCornerShape(Go3Radii.M))
+                .padding(horizontal = 18.dp, vertical = 14.dp),
+            textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 20.sp),
+            singleLine = true,
+            cursorBrush = SolidColor(Go3Colors.Cyan),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = {
+                keyboard?.hide()
+                onSearch()
+            }),
+            decorationBox = { inner ->
+                Box {
+                    if (state.weatherSearchQuery.isBlank()) {
+                        Text("Näiteks Suurupi või Muraste", color = Go3Colors.TextFaint, fontSize = 20.sp)
+                    }
+                    inner()
+                }
+            },
+        )
+        when {
+            state.weatherLoading -> Text("Otsin asukohta…", color = Go3Colors.TextSecondary, fontSize = 16.sp)
+            state.weatherError != null -> Text(state.weatherError, color = Go3Colors.ErrorText, fontSize = 15.sp)
+            state.weatherSearchResults.isEmpty() ->
+                Text("Kirjuta asula nimi ja vali klaviatuuril Otsi", color = Go3Colors.TextSecondary, fontSize = 15.sp)
+        }
+        state.weatherSearchResults.take(5).forEachIndexed { index, location ->
+            val selected = index == state.weatherSearchIndex
+            SettingsRow(selected, verticalPadding = 9.dp) {
+                Column(Modifier.weight(1f)) {
+                    Text(location.name, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text(location.area ?: "Eesti", color = Go3Colors.TextSecondary, fontSize = 13.sp)
+                }
+                if (location == state.weatherLocation) RowBadge("PRAEGUNE", selected)
+                else Text("›", color = if (selected) Color.White else Go3Colors.TextFaint, fontSize = 28.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun WeatherOverlay(state: TvUiState) {
+    val forecast = state.weatherForecast
+    Box(Modifier.fillMaxSize().background(Go3Colors.Scrim), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier
+                .fillMaxWidth(0.84f)
+                .clip(RoundedCornerShape(Go3Radii.XL))
+                .background(Go3Brushes.menuCard)
+                .border(1.dp, Go3Colors.Cyan.copy(alpha = 0.24f), RoundedCornerShape(Go3Radii.XL))
+                .padding(horizontal = 34.dp, vertical = 26.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            if (forecast == null) {
+                OverlayHeader("ILM", state.weatherLocation?.name ?: "Asukoht puudub")
+                Text(
+                    state.weatherError ?: if (state.weatherLoading) "Värskendan ilmateadet…" else "Ilmateade pole veel saadaval",
+                    color = if (state.weatherError == null) Go3Colors.TextSecondary else Go3Colors.ErrorText,
+                    fontSize = 18.sp,
+                )
+            } else {
+                WeatherCurrent(forecast)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    WeatherMetric("TAJUTAV", formatTemperature(forecast.current.apparentTemperatureC), Modifier.weight(1f))
+                    WeatherMetric("TUUL", "${oneDecimal(forecast.current.windSpeedMs)} m/s ${windDirection(forecast.current.windDirectionDegrees)}", Modifier.weight(1f))
+                    WeatherMetric("PUHANGUD", "${oneDecimal(forecast.current.windGustMs)} m/s", Modifier.weight(1f))
+                    WeatherMetric("NIISKUS", "${forecast.current.humidityPercent}%", Modifier.weight(1f))
+                    WeatherMetric("SADEMED", "${oneDecimal(forecast.current.precipitationMm)} mm", Modifier.weight(1f))
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    forecast.hours.take(6).forEach { hour ->
+                        Column(
+                            Modifier.weight(1f)
+                                .background(Go3Colors.RowIdle, RoundedCornerShape(Go3Radii.M))
+                                .padding(horizontal = 8.dp, vertical = 10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Text(hour.time.format(WEATHER_HOUR_FORMAT), color = Go3Colors.TextSecondary, fontSize = 13.sp)
+                            Image(
+                                painter = painterResource(weatherVectorRes(hour.weatherCode, isDay = hour.time.hour in 7..21)),
+                                contentDescription = weatherDescription(hour.weatherCode),
+                                modifier = Modifier.size(42.dp),
+                                colorFilter = ColorFilter.tint(Color.White),
+                            )
+                            Text(formatTemperature(hour.temperatureC), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                            Text("${hour.precipitationProbability}% sade", color = Go3Colors.Cyan, fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Andmed: Open-Meteo", color = Go3Colors.TextFaint, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Box(Modifier.size(10.dp).background(Go3Colors.KeyYellow, RoundedCornerShape(5.dp)))
+                    Text("või BACK sulgeb", color = Go3Colors.TextHint, fontSize = 13.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WeatherCurrent(forecast: WeatherForecast) {
+    val current = forecast.current
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        AnimatedWeatherIcon(current.weatherCode, current.isDay, Modifier.size(122.dp))
+        Spacer(Modifier.width(20.dp))
+        Column(Modifier.width(190.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                forecast.location.name.uppercase(),
+                color = Go3Colors.Cyan,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(formatTemperature(current.temperatureC), color = Color.White, fontSize = 58.sp, fontWeight = FontWeight.Bold)
+            Text(weatherDescription(current.weatherCode), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+            forecast.location.area?.let { Text(it, color = Go3Colors.TextSecondary, fontSize = 14.sp) }
+        }
+        Spacer(Modifier.width(18.dp))
+        WeatherDailySummary(
+            days = forecast.days.drop(1).take(4),
+            fetchedAt = forecast.fetchedAt,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun WeatherDailySummary(days: List<DailyWeather>, fetchedAt: Instant, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "JÄRGMISED PÄEVAD",
+                color = Go3Colors.TextFaint,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
+            if (fetchedAt != Instant.EPOCH) {
+                Text("Uuendatud ${formatTime(fetchedAt)}", color = Go3Colors.TextFaint, fontSize = 10.sp)
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            days.forEach { day ->
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .background(Go3Colors.RowIdle.copy(alpha = 0.72f), RoundedCornerShape(Go3Radii.M))
+                        .padding(horizontal = 5.dp, vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Text(
+                        weatherDayLabel(day),
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Image(
+                        painter = painterResource(weatherVectorRes(day.weatherCode, isDay = true)),
+                        contentDescription = weatherDescription(day.weatherCode),
+                        modifier = Modifier.size(35.dp),
+                        colorFilter = ColorFilter.tint(Color.White),
+                    )
+                    Text(
+                        "${formatTemperature(day.minimumTemperatureC)}  ${formatTemperature(day.maximumTemperatureC)}",
+                        color = Go3Colors.TextSecondary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AnimatedWeatherIcon(code: Int, isDay: Boolean, modifier: Modifier = Modifier) {
+    val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(weatherAnimationRes(code, isDay)))
+    val progress by animateLottieCompositionAsState(composition, iterations = LottieConstants.IterateForever)
+    LottieAnimation(composition = composition, progress = { progress }, modifier = modifier)
+}
+
+@Composable
+private fun WeatherMetric(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier.background(Go3Colors.RowIdle.copy(alpha = 0.78f), RoundedCornerShape(Go3Radii.M))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Text(label, color = Go3Colors.TextFaint, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text(value, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+    }
+}
+
+private fun weatherVectorRes(code: Int, isDay: Boolean): Int = when {
+    code == 0 && isDay -> R.drawable.weather_clear_day
+    code == 0 -> R.drawable.weather_clear_night
+    code in 45..48 -> R.drawable.weather_fog
+    code in 51..67 || code in 80..82 -> R.drawable.weather_rain
+    code in 71..77 || code in 85..86 -> R.drawable.weather_snow
+    code >= 95 -> R.drawable.weather_thunderstorms
+    else -> R.drawable.weather_cloudy
+}
+
+private fun weatherAnimationRes(code: Int, isDay: Boolean): Int = when {
+    code == 0 && isDay -> R.raw.weather_clear_day
+    code == 0 -> R.raw.weather_clear_night
+    code in 45..48 -> R.raw.weather_fog
+    code in 51..67 || code in 80..82 -> R.raw.weather_rain
+    code in 71..77 || code in 85..86 -> R.raw.weather_snow
+    code >= 95 -> R.raw.weather_thunderstorms
+    else -> R.raw.weather_cloudy
+}
+
+private fun weatherDescription(code: Int): String = when (code) {
+    0 -> "Selge"
+    1 -> "Peamiselt selge"
+    2 -> "Vahelduv pilvisus"
+    3 -> "Pilvine"
+    45, 48 -> "Udu"
+    in 51..57 -> "Uduvihm"
+    in 61..67 -> "Vihm"
+    in 71..77 -> "Lumesadu"
+    in 80..82 -> "Vihmahood"
+    85, 86 -> "Lumehood"
+    in 95..99 -> "Äike"
+    else -> "Muutlik ilm"
+}
+
+private fun formatTemperature(value: Double) = "${value.roundToInt()}°"
+private fun weatherDayLabel(day: DailyWeather): String = when (day.date.dayOfWeek.value) {
+    1 -> "E"
+    2 -> "T"
+    3 -> "K"
+    4 -> "N"
+    5 -> "R"
+    6 -> "L"
+    else -> "P"
+}
+private fun oneDecimal(value: Double) = String.format(Locale.US, "%.1f", value)
+private fun windDirection(degrees: Int): String {
+    val directions = listOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+    return directions[((degrees.mod(360) + 22) / 45).mod(8)]
+}
+
+private val WEATHER_HOUR_FORMAT = DateTimeFormatter.ofPattern("HH:mm")
+
+@Composable
+private fun SettingToggle(checked: Boolean) {
+    Box(
+        Modifier
+            .width(52.dp)
+            .height(28.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (checked) Go3Colors.Cyan else Go3Colors.ChipIdle)
+            .padding(3.dp),
+        contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
+    ) {
+        Box(Modifier.size(22.dp).background(Color.White, RoundedCornerShape(11.dp)))
+    }
+}
+
+@Composable
+private fun SettingValue(value: String) {
+    Text(
+        "‹  $value  ›",
+        modifier = Modifier
+            .background(Go3Colors.ChipIdle, RoundedCornerShape(Go3Radii.L))
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        color = Color.White,
+        fontSize = 15.sp,
+        fontWeight = FontWeight.Bold,
+    )
 }
 
 @Composable
