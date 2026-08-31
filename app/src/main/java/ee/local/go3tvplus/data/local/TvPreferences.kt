@@ -38,6 +38,7 @@ class TvPreferences(private val context: Context) {
         val selectedProfile = stringPreferencesKey("selected_profile")
         val preferredAudio = stringPreferencesKey("preferred_audio")
         val preferredSubtitle = stringPreferencesKey("preferred_subtitle")
+        val showClock = booleanPreferencesKey("show_clock")
         val scheduledProgramActions = stringSetPreferencesKey("scheduled_program_actions")
     }
 
@@ -45,16 +46,19 @@ class TvPreferences(private val context: Context) {
     val selectedProfile: Flow<String?> = context.tvDataStore.data.map { it[Keys.selectedProfile] }
     val preferredAudio: Flow<String> = context.tvDataStore.data.map { it[Keys.preferredAudio] ?: "et" }
     val preferredSubtitle: Flow<String?> = context.tvDataStore.data.map { it[Keys.preferredSubtitle] }
+    val showClock: Flow<Boolean> = context.tvDataStore.data.map { it[Keys.showClock] ?: false }
 
     suspend fun lastChannelNow(): String? = lastChannel.first()
     suspend fun selectedProfileNow(): String? = selectedProfile.first()
     suspend fun saveLastChannel(id: String) = context.tvDataStore.edit { it[Keys.lastChannel] = id }
     suspend fun saveSelectedProfile(id: String) = context.tvDataStore.edit { it[Keys.selectedProfile] = id }
     suspend fun playbackPreferencesNow() = PlaybackPreferences(preferredAudio.first(), preferredSubtitle.first())
+    suspend fun showClockNow(): Boolean = showClock.first()
     suspend fun savePreferredAudio(language: String) = context.tvDataStore.edit { it[Keys.preferredAudio] = language }
     suspend fun savePreferredSubtitle(language: String?) = context.tvDataStore.edit {
         if (language == null) it.remove(Keys.preferredSubtitle) else it[Keys.preferredSubtitle] = language
     }
+    suspend fun saveShowClock(show: Boolean) = context.tvDataStore.edit { it[Keys.showClock] = show }
 
     suspend fun scheduledProgramActionsNow(): List<ScheduledProgramAction> =
         context.tvDataStore.data.first()[Keys.scheduledProgramActions].orEmpty()

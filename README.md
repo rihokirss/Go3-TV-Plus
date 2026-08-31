@@ -87,12 +87,15 @@ Parooli rakendusse ei sisestata ega salvestata. Tokenid hoitakse Android Keystor
 | `→` | Ava EPG; EPG-s liigu järgmise saate juurde |
 | `←` | Ava rakenduse seaded; EPG-s liigu eelmise saate juurde |
 | `OK` | Kinnita valik; mängijavaates ava ajariba |
+| Ajaribal `↑` | Alusta vaadatavat saadet algusest, kui järelvaatamine on saadaval |
 | Hoia EPG-s `OK` | Vaheta kõigi kanalite ja lemmikute filtrit |
 | EPG-s `punane / roheline` | Eelmine / järgmine päev |
 | EPG-s `kollane` | Lisa või eemalda saate meeldetuletus |
 | EPG-s `sinine` | Lisa või eemalda automaatne kanalile lülitumine |
+| Täisekraanil `sinine` | Lülita kell sisse või välja; valik jäetakse meelde |
 | `GUIDE / MENU` | Ava EPG, kui puldil vastav nupp leidub |
-| `0–9` | Sisesta 1–3-kohaline kanalinumber; häälestus pärast sisestuspausi |
+| `1–9`, seejärel `0–9` | Sisesta 1–3-kohaline kanalinumber; häälestus pärast sisestuspausi |
+| `0` eraldi | Vaheta eelmisele kanalile; korduv vajutus lülitab kahe viimase kanali vahel |
 | `BACK` | Sulge esmalt aktiivne kiht, seejärel rakendus |
 | `HOME` | Peata taasesitus ja sulge Go3 serveriseanss |
 

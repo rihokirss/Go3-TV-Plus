@@ -248,6 +248,7 @@ private fun PlayerScreen(state: TvUiState, player: Player) {
                 selectedIndex = state.subtitleSettingsIndex,
                 activeLanguage = state.subtitleLanguagePreference,
             )
+            Overlay.DISPLAY_SETTINGS -> DisplaySettingsOverlay(state)
             Overlay.SEEK -> SeekOverlay(state)
             Overlay.NONE -> Unit
         }
@@ -261,6 +262,13 @@ private fun PlayerScreen(state: TvUiState, player: Player) {
                 fontSize = 52.sp,
                 fontWeight = FontWeight.Bold,
             )
+        }
+
+        if (
+            state.showClock && state.videoVisible && !state.loading &&
+            state.overlay == Overlay.NONE && state.numberInput.isEmpty() && state.error == null
+        ) {
+            PlaybackClock(Modifier.align(Alignment.TopEnd).padding(top = 34.dp, end = 38.dp))
         }
 
         if (state.loading && state.videoVisible && (state.channels.isEmpty() || state.overlay == Overlay.NONE)) {
@@ -332,6 +340,27 @@ private fun PlaybackStartupBackdrop(loading: Boolean) {
 }
 
 @Composable
+private fun PlaybackClock(modifier: Modifier = Modifier) {
+    var now by remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            val waitMs = 60_000L - (System.currentTimeMillis() % 60_000L)
+            delay(waitMs.coerceAtLeast(1_000L))
+            now = Instant.now()
+        }
+    }
+    Text(
+        formatTime(now),
+        modifier = modifier
+            .background(Go3Colors.PanelDark.copy(alpha = 0.72f), RoundedCornerShape(Go3Radii.M))
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+        color = Color.White,
+        fontSize = 21.sp,
+        fontWeight = FontWeight.SemiBold,
+    )
+}
+
+@Composable
 private fun SeekOverlay(state: TvUiState) {
     // While catchup plays, describe the catchup programme — not whatever is
     // currently airing live on the channel.
@@ -343,6 +372,7 @@ private fun SeekOverlay(state: TvUiState) {
         ?: Instant.now()
     val program = watching ?: state.programsFor(state.currentChannelId)
         .firstOrNull { ProgramWindow.isCurrent(it, playbackInstant) }
+    val canStartOver = watching == null && state.seekIsLive && program?.catchupAvailable == true
     val timelineStart = if (watching != null && !state.seekIsLive) {
         watching.startsAt
     } else {
@@ -444,7 +474,11 @@ private fun SeekOverlay(state: TvUiState) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(formatPlaybackDuration(state.seekPositionMs), color = Color.White, fontSize = 14.sp)
                 Row(Modifier.weight(1f), horizontalArrangement = Arrangement.Center) {
-                    KeyHintRow("◀▶" to "30 s", "OK" to "esita/paus", "BACK" to "sulge")
+                    if (canStartOver) {
+                        KeyHintRow("▲" to "algusest", "◀▶" to "30 s", "OK" to "esita/paus", "BACK" to "sulge")
+                    } else {
+                        KeyHintRow("◀▶" to "30 s", "OK" to "esita/paus", "BACK" to "sulge")
+                    }
                 }
                 Text(liveLabel, color = if (liveLabel == "OTSE") Go3Colors.Cyan else Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
@@ -942,6 +976,7 @@ private fun AppSettingsOverlay(state: TvUiState) {
         "Kanalid" to "Lemmikud, numbrid ja järjekord",
         "Helirada" to "${state.audioTrackLabel} • kõigil kanalitel",
         "Subtiitrid" to "${state.subtitleTrackLabel} • kõigil kanalitel",
+        "Ekraan ja juhtimine" to "Kell ${if (state.showClock) "sees" else "väljas"} • puldi otseteed",
         "Värskenda kanalipaketti" to "Kontrolli Go3 tellimust ja peidetud kanaleid uuesti",
     )
     Box(Modifier.fillMaxSize().background(Go3Colors.Scrim), contentAlignment = Alignment.CenterStart) {
@@ -969,6 +1004,31 @@ private fun AppSettingsOverlay(state: TvUiState) {
             }
             Spacer(Modifier.weight(1f))
             Text("Versioon ${ee.local.go3tvplus.BuildConfig.VERSION_NAME}", color = Go3Colors.TextFaint, fontSize = 13.sp)
+        }
+    }
+}
+
+@Composable
+private fun DisplaySettingsOverlay(state: TvUiState) {
+    CenteredMenuPanel {
+        OverlayHeader(
+            "EKRAAN JA JUHTIMINE",
+            "Vaatamisvaate eelistused",
+            "Sinine nupp lülitab kella ka otse täisekraanvaates",
+            keyHints = listOf("◀▶" to "muuda", "OK" to "muuda", "BACK" to "tagasi"),
+        )
+        Spacer(Modifier.height(14.dp))
+        SettingsRow(selected = state.displaySettingsIndex == 0, verticalPadding = 15.dp) {
+            Column(Modifier.weight(1f)) {
+                Text("Kell täisekraanil", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text("Kuvab tagasihoidliku HH:mm kella video paremas ülanurgas", color = Go3Colors.TextSecondary, fontSize = 14.sp)
+            }
+            Text(
+                if (state.showClock) "SEES" else "VÄLJAS",
+                color = if (state.showClock) Go3Colors.Cyan else Go3Colors.TextFaint,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+            )
         }
     }
 }

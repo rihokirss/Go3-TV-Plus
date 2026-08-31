@@ -44,7 +44,7 @@ import java.time.ZoneId
 
 enum class Overlay {
     NONE, CHANNEL_RAIL, GUIDE, APP_SETTINGS, CHANNEL_SETTINGS, PROFILE_SETTINGS,
-    AUDIO_SETTINGS, SUBTITLE_SETTINGS, SEEK,
+    AUDIO_SETTINGS, SUBTITLE_SETTINGS, DISPLAY_SETTINGS, SEEK,
 }
 
 data class TvUiState(
@@ -68,10 +68,12 @@ data class TvUiState(
     val profileSettingsIndex: Int = 0,
     val audioSettingsIndex: Int = 0,
     val subtitleSettingsIndex: Int = 0,
+    val displaySettingsIndex: Int = 0,
     val audioLanguagePreference: String = "et",
     val subtitleLanguagePreference: String? = null,
     val audioTrackLabel: String = "Eesti",
     val subtitleTrackLabel: String = "Väljas",
+    val showClock: Boolean = false,
     val favoriteChannelIds: Set<String> = emptySet(),
     val numberInput: String = "",
     /** Set while a catchup stream plays, so overlays show the right programme. */
@@ -119,6 +121,7 @@ class TvViewModel(
     private var retryCount = 0
     private var wasBackgrounded = false
     private var manuallyTimeShifted = false
+    private var previousChannelId: String? = null
     private var tuneGeneration = 0L
     private var scheduledProgramActions: Map<String, ScheduledProgramAction> = emptyMap()
     private val shownReminderIds = mutableSetOf<String>()
@@ -129,6 +132,7 @@ class TvViewModel(
         tvPlayer.setListener(this)
         viewModelScope.launch {
             val playbackPreferences = repository.playbackPreferences()
+            val showClock = repository.showClock()
             tvPlayer.applyTrackPreferences(
                 playbackPreferences.audioLanguage,
                 playbackPreferences.subtitleLanguage,
@@ -138,6 +142,7 @@ class TvViewModel(
                 subtitleLanguagePreference = playbackPreferences.subtitleLanguage,
                 audioTrackLabel = tvPlayer.audioTrackLabel(),
                 subtitleTrackLabel = tvPlayer.subtitleTrackLabel(),
+                showClock = showClock,
             )
         }
         programActionJob = viewModelScope.launch {
@@ -328,6 +333,15 @@ class TvViewModel(
             }
             return true
         }
+        if (
+            event.keyCode == KeyEvent.KEYCODE_PROG_BLUE &&
+            snapshot.overlay == Overlay.NONE &&
+            snapshot.numberInput.isEmpty() &&
+            snapshot.currentChannelId != null
+        ) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) toggleClock()
+            return true
+        }
         if (event.keyCode in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 || event.keyCode in KeyEvent.KEYCODE_NUMPAD_0..KeyEvent.KEYCODE_NUMPAD_9) {
             if (event.action == KeyEvent.ACTION_UP) {
                 heldDigitKey = null
@@ -338,6 +352,10 @@ class TvViewModel(
                 event.keyCode - KeyEvent.KEYCODE_0
             } else {
                 event.keyCode - KeyEvent.KEYCODE_NUMPAD_0
+            }
+            if (RemoteShortcutResolver.usesPreviousChannel(digit, snapshot.numberInput, snapshot.overlay)) {
+                if (event.repeatCount == 0) tunePreviousChannel()
+                return true
             }
             if (event.repeatCount == 0) {
                 if (snapshot.overlay == Overlay.CHANNEL_SETTINGS) appendSettingsDigit(digit) else appendDigit(digit)
@@ -358,7 +376,8 @@ class TvViewModel(
                 }
                 val returnOverlay = if (
                     snapshot.overlay == Overlay.CHANNEL_SETTINGS || snapshot.overlay == Overlay.PROFILE_SETTINGS ||
-                    snapshot.overlay == Overlay.AUDIO_SETTINGS || snapshot.overlay == Overlay.SUBTITLE_SETTINGS
+                    snapshot.overlay == Overlay.AUDIO_SETTINGS || snapshot.overlay == Overlay.SUBTITLE_SETTINGS ||
+                    snapshot.overlay == Overlay.DISPLAY_SETTINGS
                 ) snapshot.settingsReturnOverlay else Overlay.NONE
                 mutableState.value = snapshot.copy(overlay = returnOverlay, numberInput = "")
                 return true
@@ -387,6 +406,7 @@ class TvViewModel(
             Overlay.PROFILE_SETTINGS -> handleProfileSettingsKey(event.keyCode)
             Overlay.AUDIO_SETTINGS -> handleAudioSettingsKey(event.keyCode)
             Overlay.SUBTITLE_SETTINGS -> handleSubtitleSettingsKey(event.keyCode)
+            Overlay.DISPLAY_SETTINGS -> handleDisplaySettingsKey(event.keyCode)
             Overlay.SEEK -> handleSeekKey(event.keyCode)
             Overlay.NONE -> handlePlayerKey(event.keyCode)
         }
@@ -430,6 +450,10 @@ class TvViewModel(
     }
 
     private fun handleSeekKey(keyCode: Int): Boolean = when (keyCode) {
+        KeyEvent.KEYCODE_DPAD_UP -> {
+            startViewedProgramFromBeginning()
+            true
+        }
         KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND -> {
             val next = tvPlayer.seekBy(-30_000L)
             if (next.isLive) manuallyTimeShifted = true
@@ -455,6 +479,29 @@ class TvViewModel(
             true
         }
         else -> false
+    }
+
+    private fun startViewedProgramFromBeginning() {
+        val snapshot = mutableState.value
+        if (!snapshot.seekIsLive || snapshot.catchupProgram != null) {
+            showNotice("Algusest alustamine on saadaval otseülekande ajal")
+            return
+        }
+        val channelId = snapshot.currentChannelId ?: return
+        val playbackInstant = Instant.now().minusMillis(snapshot.seekLiveOffsetMs?.coerceAtLeast(0L) ?: 0L)
+        val program = nowProgram(channelId, playbackInstant)
+        if (program == null || !program.catchupAvailable) {
+            showNotice("Seda saadet ei saa algusest alustada")
+            return
+        }
+        playCatchup(program)
+    }
+
+    private fun toggleClock() {
+        val show = !mutableState.value.showClock
+        mutableState.value = mutableState.value.copy(showClock = show)
+        showNotice(if (show) "Kell sees" else "Kell väljas")
+        viewModelScope.launch { repository.saveShowClock(show) }
     }
 
     private fun updateSeekState(snapshot: SeekSnapshot, overlay: Overlay? = null) {
@@ -825,6 +872,24 @@ class TvViewModel(
             ?: run { mutableState.value = mutableState.value.copy(error = "Kanalit $number ei leitud") }
     }
 
+    private fun tunePreviousChannel() {
+        val snapshot = mutableState.value
+        val target = snapshot.channels.firstOrNull { it.id == previousChannelId }
+        if (target == null) {
+            showNotice("Eelmist kanalit pole veel")
+            return
+        }
+        val index = snapshot.channels.indexOfFirst { it.id == target.id }.coerceAtLeast(0)
+        mutableState.value = snapshot.copy(
+            overlay = Overlay.CHANNEL_RAIL,
+            railIndex = index,
+            favoritesOnly = false,
+            numberInput = "",
+        )
+        scheduleRailClose()
+        tune(target)
+    }
+
     private fun showRail() {
         val visibleChannels = railChannels(mutableState.value)
         val current = visibleChannels.indexOfFirst { it.id == mutableState.value.currentChannelId }.coerceAtLeast(0)
@@ -920,7 +985,7 @@ class TvViewModel(
         val snapshot = mutableState.value
         when (keyCode) {
             KeyEvent.KEYCODE_DPAD_UP -> mutableState.value = snapshot.copy(appSettingsIndex = (snapshot.appSettingsIndex - 1).coerceAtLeast(0))
-            KeyEvent.KEYCODE_DPAD_DOWN -> mutableState.value = snapshot.copy(appSettingsIndex = (snapshot.appSettingsIndex + 1).coerceAtMost(4))
+            KeyEvent.KEYCODE_DPAD_DOWN -> mutableState.value = snapshot.copy(appSettingsIndex = (snapshot.appSettingsIndex + 1).coerceAtMost(5))
             KeyEvent.KEYCODE_DPAD_RIGHT,
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                 when (snapshot.appSettingsIndex) {
@@ -928,7 +993,8 @@ class TvViewModel(
                     1 -> openChannelSettings(returnOverlay = Overlay.APP_SETTINGS)
                     2 -> openAudioSettings()
                     3 -> openSubtitleSettings()
-                    4 -> refreshChannelPackage()
+                    4 -> openDisplaySettings()
+                    5 -> refreshChannelPackage()
                 }
             }
             else -> return false
@@ -973,6 +1039,7 @@ class TvViewModel(
             return
         }
         tuneJob?.cancel()
+        previousChannelId = null
         viewModelScope.launch {
             mutableState.value = mutableState.value.copy(
                 selectedProfileId = profile.id,
@@ -1048,6 +1115,28 @@ class TvViewModel(
             else -> return false
         }
         return true
+    }
+
+    private fun openDisplaySettings() {
+        mutableState.value = mutableState.value.copy(
+            overlay = Overlay.DISPLAY_SETTINGS,
+            displaySettingsIndex = 0,
+            settingsReturnOverlay = Overlay.APP_SETTINGS,
+        )
+    }
+
+    private fun handleDisplaySettingsKey(keyCode: Int): Boolean = when (keyCode) {
+        KeyEvent.KEYCODE_DPAD_UP,
+        KeyEvent.KEYCODE_DPAD_DOWN -> true
+        KeyEvent.KEYCODE_DPAD_LEFT,
+        KeyEvent.KEYCODE_DPAD_RIGHT,
+        KeyEvent.KEYCODE_DPAD_CENTER,
+        KeyEvent.KEYCODE_ENTER,
+        KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+            toggleClock()
+            true
+        }
+        else -> false
     }
 
     private fun refreshChannelPackage() {
@@ -1208,6 +1297,11 @@ class TvViewModel(
                         ticket = ticket,
                         channelName = channel.name,
                         programTitle = nowProgram(channel.id)?.title,
+                    )
+                    previousChannelId = PreviousChannelResolver.afterSuccessfulTune(
+                        previousChannelId = previousChannelId,
+                        currentChannelId = mutableState.value.currentChannelId,
+                        tunedChannelId = channel.id,
                     )
                     mutableState.value = mutableState.value.copy(currentChannelId = channel.id, catchupProgram = null)
                     adoptedTicket = true
@@ -1570,5 +1664,22 @@ object ChannelNumberResolver {
         }.takeIf { assignments ->
             assignments.values.all { it in 1..999 } && assignments.values.distinct().size == assignments.size
         }
+    }
+}
+
+internal object RemoteShortcutResolver {
+    fun usesPreviousChannel(digit: Int, pendingDigits: String, overlay: Overlay): Boolean =
+        digit == 0 && pendingDigits.isEmpty() && overlay != Overlay.CHANNEL_SETTINGS
+}
+
+internal object PreviousChannelResolver {
+    fun afterSuccessfulTune(
+        previousChannelId: String?,
+        currentChannelId: String?,
+        tunedChannelId: String,
+    ): String? = if (currentChannelId != null && currentChannelId != tunedChannelId) {
+        currentChannelId
+    } else {
+        previousChannelId
     }
 }

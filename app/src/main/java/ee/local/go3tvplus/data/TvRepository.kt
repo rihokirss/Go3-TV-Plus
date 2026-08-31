@@ -117,8 +117,10 @@ class TvRepository(
     suspend fun selectedProfileId() = preferences.selectedProfileNow()
     suspend fun saveSelectedProfile(id: String) = preferences.saveSelectedProfile(id)
     suspend fun playbackPreferences() = preferences.playbackPreferencesNow()
+    suspend fun showClock() = preferences.showClockNow()
     suspend fun savePreferredAudio(language: String) = preferences.savePreferredAudio(language)
     suspend fun savePreferredSubtitle(language: String?) = preferences.savePreferredSubtitle(language)
+    suspend fun saveShowClock(show: Boolean) = preferences.saveShowClock(show)
     suspend fun scheduledProgramActions() = preferences.scheduledProgramActionsNow()
     suspend fun saveScheduledProgramActions(actions: Collection<ScheduledProgramAction>) =
         preferences.saveScheduledProgramActions(actions)
