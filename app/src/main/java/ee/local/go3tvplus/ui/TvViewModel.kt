@@ -55,7 +55,7 @@ enum class Overlay(val returnsToParent: Boolean = false) {
     NONE, CHANNEL_RAIL, GUIDE, APP_SETTINGS,
     CHANNEL_SETTINGS(true), PROFILE_SETTINGS(true), AUDIO_SETTINGS(true),
     SUBTITLE_SETTINGS(true), DISPLAY_SETTINGS(true), WEATHER_LOCATION(true),
-    WEATHER(true), TRANSIT_STOP_SETTINGS(true), TRANSIT(true), SEEK,
+    WEATHER(true), TRANSIT_STOP_SETTINGS(true), TRANSIT(true), TONIGHT(true), SEEK,
 }
 
 data class TvUiState(
@@ -106,6 +106,9 @@ data class TvUiState(
     val transitStopSearchIndex: Int = -1,
     val transitStopLoading: Boolean = false,
     val transitStopError: String? = null,
+    val tonightEntries: List<TonightEntry> = emptyList(),
+    val tonightIndex: Int = 0,
+    val tonightNow: Instant = Instant.EPOCH,
     val favoriteChannelIds: Set<String> = emptySet(),
     val numberInput: String = "",
     /** Set while a catchup stream plays, so overlays show the right programme. */
@@ -155,6 +158,7 @@ class TvViewModel(
     private var noticeJob: Job? = null
     private var startupRecoveryJob: Job? = null
     private var transitRefreshJob: Job? = null
+    private var tonightRefreshJob: Job? = null
     private var activeTicket: PlaybackTicket? = null
     private var pendingChannelId: String? = null
     private var pendingSeekOverlayChannelId: String? = null
@@ -436,11 +440,22 @@ class TvViewModel(
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) closeTransit()
             return true
         }
+        if (snapshot.overlay == Overlay.TONIGHT && event.keyCode == KeyEvent.KEYCODE_PROG_RED) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) closeTonight()
+            return true
+        }
         if (
             event.keyCode == KeyEvent.KEYCODE_PROG_GREEN &&
             snapshot.overlay == Overlay.NONE && snapshot.numberInput.isEmpty() && snapshot.currentChannelId != null
         ) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) openTransit()
+            return true
+        }
+        if (
+            event.keyCode == KeyEvent.KEYCODE_PROG_RED &&
+            snapshot.overlay == Overlay.NONE && snapshot.numberInput.isEmpty() && snapshot.currentChannelId != null
+        ) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) openTonight()
             return true
         }
         if (
@@ -492,6 +507,7 @@ class TvViewModel(
                     seekCloseJob?.cancel()
                 }
                 if (snapshot.overlay == Overlay.TRANSIT) transitRefreshJob?.cancel()
+                if (snapshot.overlay == Overlay.TONIGHT) tonightRefreshJob?.cancel()
                 val returnOverlay =
                     if (snapshot.overlay.returnsToParent) snapshot.settingsReturnOverlay else Overlay.NONE
                 mutableState.value = snapshot.copy(overlay = returnOverlay, numberInput = "")
@@ -526,6 +542,7 @@ class TvViewModel(
             Overlay.WEATHER -> true
             Overlay.TRANSIT_STOP_SETTINGS -> handleTransitStopSettingsKey(event.keyCode)
             Overlay.TRANSIT -> handleTransitKey(event.keyCode)
+            Overlay.TONIGHT -> handleTonightKey(event.keyCode)
             Overlay.SEEK -> handleSeekKey(event.keyCode)
             Overlay.NONE -> handlePlayerKey(event.keyCode)
         }
@@ -745,33 +762,35 @@ class TvViewModel(
                 return
             }
         }
+        val toggleReminder = when (keyCode) {
+            KeyEvent.KEYCODE_PROG_YELLOW -> true
+            KeyEvent.KEYCODE_PROG_BLUE -> false
+            else -> return
+        }
         val snapshot = mutableState.value
-        val program = programsForGuideChannel(snapshot).getOrNull(snapshot.guideProgramIndex)
+        toggleScheduledProgramAction(
+            programsForGuideChannel(snapshot).getOrNull(snapshot.guideProgramIndex),
+            toggleReminder,
+        )
+    }
+
+    /** Ühine meeldetuletuse/automaatlülituse lüliti telekavale ja õhtukava paneelile. */
+    private fun toggleScheduledProgramAction(program: Program?, toggleReminder: Boolean) {
         if (program == null || !program.startsAt.isAfter(Instant.now())) {
             showNotice(
-                if (keyCode == KeyEvent.KEYCODE_PROG_YELLOW) "Meeldetuletuse saab lisada tulevasele saatele"
+                if (toggleReminder) "Meeldetuletuse saab lisada tulevasele saatele"
                 else "Automaatlülituse saab lisada tulevasele saatele",
             )
             return
         }
         val previous = scheduledProgramActions[program.id]
-        val updated = when (keyCode) {
-            KeyEvent.KEYCODE_PROG_YELLOW -> ScheduledProgramAction(
-                programId = program.id,
-                channelId = program.channelId,
-                startsAtEpochMs = program.startsAt.toEpochMilli(),
-                reminder = previous?.reminder != true,
-                autoTune = previous?.autoTune == true,
-            )
-            KeyEvent.KEYCODE_PROG_BLUE -> ScheduledProgramAction(
-                programId = program.id,
-                channelId = program.channelId,
-                startsAtEpochMs = program.startsAt.toEpochMilli(),
-                reminder = previous?.reminder == true,
-                autoTune = previous?.autoTune != true,
-            )
-            else -> return
-        }.takeIf { it.reminder || it.autoTune }
+        val updated = ScheduledProgramAction(
+            programId = program.id,
+            channelId = program.channelId,
+            startsAtEpochMs = program.startsAt.toEpochMilli(),
+            reminder = if (toggleReminder) previous?.reminder != true else previous?.reminder == true,
+            autoTune = if (toggleReminder) previous?.autoTune == true else previous?.autoTune != true,
+        ).takeIf { it.reminder || it.autoTune }
 
         scheduledProgramActions = scheduledProgramActions.toMutableMap().apply {
             if (updated == null) remove(program.id) else put(program.id, updated)
@@ -1403,6 +1422,95 @@ class TvViewModel(
         return true
     }
 
+    private fun openTonight() {
+        tonightRefreshJob?.cancel()
+        val snapshot = mutableState.value
+        val now = Instant.now()
+        mutableState.value = snapshot.copy(
+            overlay = Overlay.TONIGHT,
+            settingsReturnOverlay = Overlay.NONE,
+            tonightEntries = TonightScheduleResolver.entries(
+                snapshot.channels,
+                snapshot.favoriteChannelIds,
+                snapshot.programsByChannel,
+                now,
+                ZoneId.systemDefault(),
+            ),
+            tonightIndex = 0,
+            tonightNow = now,
+        )
+        tonightRefreshJob = viewModelScope.launch {
+            while (mutableState.value.overlay == Overlay.TONIGHT) {
+                delay(TONIGHT_REFRESH_INTERVAL_MS)
+                refreshTonightEntries()
+            }
+        }
+    }
+
+    private fun refreshTonightEntries() {
+        val snapshot = mutableState.value
+        if (snapshot.overlay != Overlay.TONIGHT) return
+        val now = Instant.now()
+        val entries = TonightScheduleResolver.entries(
+            snapshot.channels,
+            snapshot.favoriteChannelIds,
+            snapshot.programsByChannel,
+            now,
+            ZoneId.systemDefault(),
+        )
+        // Hoia valik samal saatel, kui nimekiri värskendusel nihkub.
+        val selectedProgramId = snapshot.tonightEntries.getOrNull(snapshot.tonightIndex)?.program?.id
+        val index = entries.indexOfFirst { it.program.id == selectedProgramId }
+            .takeIf { it >= 0 }
+            ?: snapshot.tonightIndex.coerceIn(0, (entries.size - 1).coerceAtLeast(0))
+        mutableState.value = snapshot.copy(tonightEntries = entries, tonightIndex = index, tonightNow = now)
+    }
+
+    private fun closeTonight() {
+        tonightRefreshJob?.cancel()
+        mutableState.value = mutableState.value.copy(overlay = mutableState.value.settingsReturnOverlay)
+    }
+
+    private fun handleTonightKey(keyCode: Int): Boolean {
+        val snapshot = mutableState.value
+        val entry = snapshot.tonightEntries.getOrNull(snapshot.tonightIndex)
+        when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_UP -> mutableState.value = snapshot.copy(
+                tonightIndex = (snapshot.tonightIndex - 1).coerceAtLeast(0),
+            )
+            KeyEvent.KEYCODE_DPAD_DOWN -> mutableState.value = snapshot.copy(
+                tonightIndex = (snapshot.tonightIndex + 1)
+                    .coerceAtMost((snapshot.tonightEntries.size - 1).coerceAtLeast(0)),
+            )
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                if (entry == null) return true
+                val now = Instant.now()
+                when {
+                    // Tulevane saade: OK on kiirtee meeldetuletuseni.
+                    entry.program.startsAt.isAfter(now) ->
+                        toggleScheduledProgramAction(entry.program, toggleReminder = true)
+                    // Käimasolev saade: hüppa kohe kanalile.
+                    entry.program.endsAt.isAfter(now) -> {
+                        mutableState.value = mutableState.value.copy(
+                            overlay = Overlay.NONE,
+                            error = null,
+                            errorActionIndex = 0,
+                        )
+                        tune(entry.channel)
+                    }
+                    // Vahepeal lõppenud saade: paku järelvaatamist.
+                    else -> playCatchup(entry.program)
+                }
+            }
+            KeyEvent.KEYCODE_PROG_YELLOW ->
+                entry?.let { toggleScheduledProgramAction(it.program, toggleReminder = true) }
+            KeyEvent.KEYCODE_PROG_BLUE ->
+                entry?.let { toggleScheduledProgramAction(it.program, toggleReminder = false) }
+            else -> return false
+        }
+        return true
+    }
+
     private fun openTransitStopSettings() {
         val stop = mutableState.value.transitStop
         mutableState.value = mutableState.value.copy(
@@ -1726,6 +1834,7 @@ class TvViewModel(
         channelTuneJob = null
         playbackRetryJob?.cancel()
         transitRefreshJob?.cancel()
+        tonightRefreshJob?.cancel()
         playbackRetryJob = null
         val generation = ++tuneGeneration
         tuneJob?.cancel()
@@ -2096,6 +2205,7 @@ private const val PROGRAM_ACTION_POLL_MS = 15_000L
 private const val PROGRAM_NOTICE_TIMEOUT_MS = 5_000L
 private const val CLOCK_NOTICE_TIMEOUT_MS = PROGRAM_NOTICE_TIMEOUT_MS
 private const val TRANSIT_REFRESH_INTERVAL_MS = 30_000L
+private const val TONIGHT_REFRESH_INTERVAL_MS = 30_000L
 private val PROGRAM_COLOR_KEYS = setOf(
     KeyEvent.KEYCODE_PROG_RED,
     KeyEvent.KEYCODE_PROG_GREEN,
@@ -2162,6 +2272,45 @@ internal object SearchSelectionResolver {
     fun move(currentIndex: Int, resultCount: Int, direction: Int): Int {
         if (resultCount <= 0) return -1
         return (currentIndex + direction.coerceIn(-1, 1)).coerceIn(-1, resultCount - 1)
+    }
+}
+
+/** Üks õhtukava rida: saade koos kanaliga, millel see jookseb. */
+data class TonightEntry(val channel: Channel, val program: Program)
+
+internal object TonightScheduleResolver {
+    private val WINDOW_LENGTH: Duration = Duration.ofHours(5)
+
+    /**
+     * Õhtuse akna algus: päevasel avamisel tänane 19:00, õhtul või öösel
+     * avamisel praegune hetk (siis näitab paneel käimasolevat ja järgnevat).
+     */
+    fun windowStart(now: Instant, zone: ZoneId): Instant {
+        val local = now.atZone(zone)
+        return if (local.hour in 4..18) {
+            local.toLocalDate().atTime(19, 0).atZone(zone).toInstant()
+        } else {
+            now
+        }
+    }
+
+    fun entries(
+        channels: List<Channel>,
+        favoriteChannelIds: Set<String>,
+        programsByChannel: Map<String, List<Program>>,
+        now: Instant,
+        zone: ZoneId,
+    ): List<TonightEntry> {
+        val start = windowStart(now, zone)
+        val end = start.plus(WINDOW_LENGTH)
+        val base = channels.filter { it.id in favoriteChannelIds }.ifEmpty { channels }
+        return base.flatMap { channel ->
+            programsByChannel[channel.id].orEmpty()
+                .filter { it.endsAt.isAfter(start) && it.startsAt.isBefore(end) }
+                .map { TonightEntry(channel, it) }
+        }.sortedWith(
+            compareBy({ it.program.startsAt }, { it.channel.serverNumber ?: Int.MAX_VALUE }),
+        )
     }
 }
 

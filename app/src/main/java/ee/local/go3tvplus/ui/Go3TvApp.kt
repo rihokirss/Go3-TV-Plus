@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -341,6 +342,7 @@ private fun PlayerScreen(
                 onInputKey = onSearchInputKey,
             )
             Overlay.TRANSIT -> TransitOverlay(state)
+            Overlay.TONIGHT -> TonightOverlay(state)
             Overlay.SEEK -> SeekOverlay(state)
             Overlay.NONE -> Unit
         }
@@ -1483,29 +1485,7 @@ private fun TransitOverlay(state: TvUiState) {
     val listState = rememberLazyListState()
     LaunchedEffect(state.transitDirectionIndex, state.transitDepartureIndex, departures.size) {
         if (departures.isNotEmpty()) {
-            val selectedIndex = state.transitDepartureIndex.coerceIn(departures.indices)
-            val layout = listState.layoutInfo
-            val visibleItems = layout.visibleItemsInfo
-            val selectedItem = visibleItems.firstOrNull { it.index == selectedIndex }
-            when {
-                selectedItem != null && selectedItem.offset < layout.viewportStartOffset ->
-                    listState.animateScrollBy((selectedItem.offset - layout.viewportStartOffset).toFloat())
-
-                selectedItem != null && selectedItem.offset + selectedItem.size > layout.viewportEndOffset ->
-                    listState.animateScrollBy(
-                        (selectedItem.offset + selectedItem.size - layout.viewportEndOffset).toFloat(),
-                    )
-
-                visibleItems.isNotEmpty() && selectedIndex < visibleItems.first().index ->
-                    listState.animateScrollToItem(selectedIndex)
-
-                visibleItems.isNotEmpty() && selectedIndex > visibleItems.last().index -> {
-                    val rowHeight = visibleItems.last().size
-                    val visibleHeight = layout.viewportEndOffset - layout.viewportStartOffset
-                    val rowTopAtBottom = (visibleHeight - rowHeight).coerceAtLeast(0)
-                    listState.animateScrollToItem(selectedIndex, scrollOffset = -rowTopAtBottom)
-                }
-            }
+            listState.followSelection(state.transitDepartureIndex.coerceIn(departures.indices))
         }
     }
     Box(Modifier.fillMaxSize().background(Go3Colors.Scrim), contentAlignment = Alignment.Center) {
@@ -1583,9 +1563,7 @@ private fun TransitOverlay(state: TvUiState) {
                 Text("Andmed: Peatus.ee / ÜTRIS", color = Go3Colors.TextFaint, fontSize = 11.sp, modifier = Modifier.weight(1f))
                 KeyHintRow("◀▶" to "suund", "▲▼" to "väljumine", "OK" to "värskenda")
                 Spacer(Modifier.width(16.dp))
-                Box(Modifier.size(10.dp).background(Go3Colors.KeyGreen, RoundedCornerShape(5.dp)))
-                Spacer(Modifier.width(6.dp))
-                Text("või BACK sulgeb", color = Go3Colors.TextHint, fontSize = 13.sp)
+                ColorKeyDot(Go3Colors.KeyGreen, "või BACK sulgeb")
             }
         }
     }
@@ -1655,7 +1633,7 @@ private fun TransitDepartureRow(departure: TransitDeparture, selected: Boolean) 
             )
         }
         Text(
-            transitRelativeTime(departure.departureAt),
+            relativeTimeLabel(departure.departureAt),
             color = if (selected) Color.White else Go3Colors.KeyGreen,
             fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
@@ -1698,7 +1676,7 @@ private fun transitDateLabel(instant: Instant): String {
     }
 }
 
-private fun transitRelativeTime(instant: Instant): String {
+private fun relativeTimeLabel(instant: Instant): String {
     val minutes = Duration.between(Instant.now(), instant).toMinutes().coerceAtLeast(0)
     return when {
         minutes <= 1 -> "KOHE"
@@ -1706,6 +1684,268 @@ private fun transitRelativeTime(instant: Instant): String {
         minutes < 24 * 60 -> "${minutes / 60} h ${minutes % 60} min"
         else -> "${minutes / (24 * 60)} päeva"
     }
+}
+
+/** Kerib LazyColumni nii, et valitud rida jääb alati nähtavale (ka pikkadel hüpetel). */
+private suspend fun LazyListState.followSelection(selectedIndex: Int) {
+    val layout = layoutInfo
+    val visibleItems = layout.visibleItemsInfo
+    val selectedItem = visibleItems.firstOrNull { it.index == selectedIndex }
+    when {
+        selectedItem != null && selectedItem.offset < layout.viewportStartOffset ->
+            animateScrollBy((selectedItem.offset - layout.viewportStartOffset).toFloat())
+
+        selectedItem != null && selectedItem.offset + selectedItem.size > layout.viewportEndOffset ->
+            animateScrollBy((selectedItem.offset + selectedItem.size - layout.viewportEndOffset).toFloat())
+
+        visibleItems.isNotEmpty() && selectedIndex < visibleItems.first().index ->
+            animateScrollToItem(selectedIndex)
+
+        visibleItems.isNotEmpty() && selectedIndex > visibleItems.last().index -> {
+            val rowHeight = visibleItems.last().size
+            val visibleHeight = layout.viewportEndOffset - layout.viewportStartOffset
+            val rowTopAtBottom = (visibleHeight - rowHeight).coerceAtLeast(0)
+            animateScrollToItem(selectedIndex, scrollOffset = -rowTopAtBottom)
+        }
+    }
+}
+
+@Composable
+private fun TonightOverlay(state: TvUiState) {
+    val entries = state.tonightEntries
+    val now = if (state.tonightNow == Instant.EPOCH) Instant.now() else state.tonightNow
+    val listState = rememberLazyListState()
+    LaunchedEffect(state.tonightIndex, entries.size) {
+        if (entries.isNotEmpty()) {
+            listState.followSelection(state.tonightIndex.coerceIn(entries.indices))
+        }
+    }
+    Box(Modifier.fillMaxSize().background(Go3Colors.Scrim), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier
+                .fillMaxWidth(0.82f)
+                .fillMaxHeight(0.94f)
+                .clip(RoundedCornerShape(Go3Radii.XL))
+                .background(Go3Brushes.menuCard)
+                .border(1.dp, Go3Colors.KeyRed.copy(alpha = 0.28f), RoundedCornerShape(Go3Radii.XL))
+                .padding(horizontal = 28.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("TÄNA ÕHTUL", color = Go3Colors.KeyRed, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(tonightDateLabel(now), color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Bold)
+                }
+                Text(
+                    if (state.favoriteChannelIds.isEmpty()) "Kõik kanalid" else "Lemmikkanalid",
+                    color = Go3Colors.TextFaint,
+                    fontSize = 11.sp,
+                )
+            }
+
+            if (entries.isEmpty()) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text("Tänase õhtu kava pole veel laaditud", color = Go3Colors.TextSecondary, fontSize = 20.sp)
+                        Text(
+                            "Telekava uueneb taustal — proovi hetke pärast uuesti",
+                            color = Go3Colors.TextFaint,
+                            fontSize = 14.sp,
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    state = listState,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    itemsIndexed(
+                        entries,
+                        key = { _, entry -> "${entry.channel.id}-${entry.program.id}" },
+                    ) { index, entry ->
+                        TonightProgramRow(
+                            entry = entry,
+                            now = now,
+                            selected = index == state.tonightIndex,
+                            reminderSet = entry.program.id in state.scheduledReminderIds,
+                            autoTuneSet = entry.program.id in state.scheduledAutoTuneIds,
+                        )
+                    }
+                }
+                val description = entries.getOrNull(state.tonightIndex)?.program?.description
+                    ?.takeIf(String::isNotBlank)
+                Text(
+                    description ?: "Sellel saatel kirjeldus puudub",
+                    color = if (description != null) Go3Colors.TextSecondary else Go3Colors.TextFaint,
+                    fontSize = 13.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Go3Colors.GuideRowTint, RoundedCornerShape(Go3Radii.M))
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                )
+            }
+
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (entries.isEmpty()) "" else "${entries.size} saadet",
+                    color = Go3Colors.TextFaint,
+                    fontSize = 11.sp,
+                    modifier = Modifier.weight(1f),
+                )
+                KeyHintRow("▲▼" to "vali", "OK" to "vaata / tuleta meelde")
+                Spacer(Modifier.width(14.dp))
+                ColorKeyDot(Go3Colors.KeyYellow, "meeldetuletus")
+                Spacer(Modifier.width(10.dp))
+                ColorKeyDot(Go3Colors.KeyBlue, "automaatlülitus")
+                Spacer(Modifier.width(10.dp))
+                ColorKeyDot(Go3Colors.KeyRed, "või BACK sulgeb")
+            }
+        }
+    }
+}
+
+@Composable
+private fun TonightProgramRow(
+    entry: TonightEntry,
+    now: Instant,
+    selected: Boolean,
+    reminderSet: Boolean,
+    autoTuneSet: Boolean,
+) {
+    val program = entry.program
+    val live = !program.startsAt.isAfter(now) && program.endsAt.isAfter(now)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(if (selected) Go3Colors.Accent else Go3Colors.RowIdle, RoundedCornerShape(Go3Radii.M))
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Column(Modifier.width(78.dp)) {
+            Text(formatTime(program.startsAt), color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "kuni ${formatTime(program.endsAt)}",
+                color = if (selected) Color.White.copy(alpha = 0.8f) else Go3Colors.TextFaint,
+                fontSize = 10.sp,
+            )
+        }
+        Box(
+            Modifier
+                .width(128.dp)
+                .background(
+                    if (selected) Color.White.copy(alpha = 0.18f) else Go3Colors.StatusChip,
+                    RoundedCornerShape(Go3Radii.S),
+                )
+                .padding(horizontal = 8.dp, vertical = 5.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Text(
+                listOfNotNull(entry.channel.serverNumber?.toString(), entry.channel.name).joinToString(" "),
+                color = Color.White,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                program.title,
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (live) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .height(3.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(if (selected) Color.White.copy(alpha = 0.3f) else Go3Colors.ProgressTrack),
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(programProgress(program, now))
+                                .background(if (selected) Color.White else Go3Colors.KeyGreen),
+                        )
+                    }
+                    Text(
+                        "lõpeb ${formatTime(program.endsAt)}",
+                        color = if (selected) Color.White else Go3Colors.TextFaint,
+                        fontSize = 10.sp,
+                    )
+                }
+            } else {
+                Text(
+                    program.description?.takeIf(String::isNotBlank) ?: " ",
+                    color = if (selected) Color.White.copy(alpha = 0.85f) else Go3Colors.TextFaint,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (reminderSet) TonightActionChip("TULETA MEELDE", Go3Colors.KeyYellow, selected)
+        if (autoTuneSet) TonightActionChip("LÜLITUB", Go3Colors.KeyBlue, selected)
+        Text(
+            if (live) "KÄIB" else relativeTimeLabel(program.startsAt),
+            color = when {
+                selected -> Color.White
+                live -> Go3Colors.KeyGreen
+                else -> Go3Colors.Cyan
+            },
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(88.dp),
+        )
+    }
+}
+
+@Composable
+private fun TonightActionChip(text: String, color: Color, selected: Boolean) {
+    Text(
+        text,
+        color = if (selected) Color.White else color,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .background((if (selected) Color.White else color).copy(alpha = 0.18f), RoundedCornerShape(Go3Radii.XS))
+            .padding(horizontal = 6.dp, vertical = 3.dp),
+    )
+}
+
+@Composable
+private fun ColorKeyDot(color: Color, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(10.dp).background(color, RoundedCornerShape(5.dp)))
+        Spacer(Modifier.width(6.dp))
+        Text(label, color = Go3Colors.TextHint, fontSize = 13.sp)
+    }
+}
+
+private fun tonightDateLabel(now: Instant): String {
+    val estonian = Locale.forLanguageTag("et-EE")
+    return now.atZone(ZoneId.systemDefault())
+        .format(DateTimeFormatter.ofPattern("EEEE, d. MMMM", estonian))
+        .replaceFirstChar { it.titlecase(estonian) }
+}
+
+private fun programProgress(program: Program, now: Instant): Float {
+    val total = Duration.between(program.startsAt, program.endsAt).toMillis().coerceAtLeast(1)
+    val elapsed = Duration.between(program.startsAt, now).toMillis().coerceIn(0, total)
+    return elapsed.toFloat() / total
 }
 
 @Composable
