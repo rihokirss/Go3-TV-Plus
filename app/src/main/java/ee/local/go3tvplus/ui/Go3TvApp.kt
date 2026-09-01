@@ -1675,7 +1675,7 @@ private fun transitDirectionLabels(
     val origins = departures.map(TransitDeparture::origin).distinct().take(2)
     val title = when {
         stopName.equals("Muraste", ignoreCase = true) && stopCode == "21524-1" -> "TALLINNA POOLE"
-        stopName.equals("Muraste", ignoreCase = true) && stopCode == "21525-1" -> "LÄÄNE POOLE"
+        stopName.equals("Muraste", ignoreCase = true) && stopCode == "21525-1" -> "VÄÄNA-JÕESUU POOLE"
         destinations.isNotEmpty() -> destinations.joinToString(" · ").uppercase(Locale.forLanguageTag("et-EE"))
         else -> "SUUND ${index + 1}"
     }
