@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -184,25 +185,28 @@ class TvViewModel(
                 playbackPreferences.audioLanguage,
                 playbackPreferences.subtitleLanguage,
             )
-            mutableState.value = mutableState.value.copy(
-                audioLanguagePreference = playbackPreferences.audioLanguage,
-                subtitleLanguagePreference = playbackPreferences.subtitleLanguage,
-                audioTrackLabel = tvPlayer.audioTrackLabel(),
-                subtitleTrackLabel = tvPlayer.subtitleTrackLabel(),
-                showClock = showClock,
-                channelInfoSeconds = channelInfoSeconds,
-                seekOverlaySeconds = seekOverlaySeconds,
-                seekStepSeconds = seekStepSeconds,
-            )
+            mutableState.update { state ->
+                state.copy(
+                    audioLanguagePreference = playbackPreferences.audioLanguage,
+                    subtitleLanguagePreference = playbackPreferences.subtitleLanguage,
+                    audioTrackLabel = tvPlayer.audioTrackLabel(),
+                    subtitleTrackLabel = tvPlayer.subtitleTrackLabel(),
+                    showClock = showClock,
+                    channelInfoSeconds = channelInfoSeconds,
+                    seekOverlaySeconds = seekOverlaySeconds,
+                    seekStepSeconds = seekStepSeconds,
+                )
+            }
         }
         viewModelScope.launch {
             repository.weatherLocation()?.let { location ->
-                mutableState.value = mutableState.value.copy(weatherLocation = location)
+                mutableState.update { it.copy(weatherLocation = location) }
                 refreshWeather(location)
             }
         }
         viewModelScope.launch {
-            mutableState.value = mutableState.value.copy(transitStop = repository.transitStop())
+            val transitStop = repository.transitStop()
+            mutableState.update { it.copy(transitStop = transitStop) }
         }
         programActionJob = viewModelScope.launch {
             val now = System.currentTimeMillis()
@@ -215,7 +219,7 @@ class TvViewModel(
         }
         viewModelScope.launch {
             authCoordinator.state.collect { auth ->
-                mutableState.value = mutableState.value.copy(auth = auth, error = null)
+                mutableState.update { it.copy(auth = auth, error = null) }
                 if (auth == DeviceAuthState.Approved) {
                     startStartupRecovery()
                 } else {
@@ -238,18 +242,19 @@ class TvViewModel(
                 val availableIds = channels.mapTo(mutableSetOf(), Channel::id)
                 val favoriteIds = saved.values.filter(ChannelPreference::favorite)
                     .map(ChannelPreference::channelId).filterTo(mutableSetOf()) { it in availableIds }
-                mutableState.value = mutableState.value.copy(
-                    channels = channels,
-                    favoriteChannelIds = favoriteIds,
-                    favoritesOnly = mutableState.value.favoritesOnly && favoriteIds.isNotEmpty(),
-                )
+                mutableState.update { state ->
+                    state.copy(
+                        channels = channels,
+                        favoriteChannelIds = favoriteIds,
+                        favoritesOnly = state.favoritesOnly && favoriteIds.isNotEmpty(),
+                    )
+                }
                 tuneInitialChannelIfNeeded()
             }
         }
         viewModelScope.launch {
             repository.guide.conflate().collect { (rawChannels, programs) ->
-                val previous = mutableState.value
-                val profileId = previous.selectedProfileId
+                val profileId = mutableState.value.selectedProfileId
                 val hiddenChannelIds = profileId?.let { repository.hiddenChannelIds(it) }.orEmpty()
                 val availableIds = rawChannels.filterNot { it.id in hiddenChannelIds }
                     .mapTo(mutableSetOf(), Channel::id)
@@ -258,30 +263,36 @@ class TvViewModel(
                         .filterKeys { it in availableIds }
                         .mapValues { (_, channelPrograms) -> channelPrograms.sortedBy(Program::startsAt) }
                 }
-                var updated = previous.copy(programsByChannel = indexedPrograms)
-                if (previous.overlay == Overlay.GUIDE) {
-                    val channels = guideChannels(updated)
-                    val channelId = channels.getOrNull(previous.guideChannelIndex)?.id
-                    val previouslySelected = channelId?.let { previous.programsByChannel[it] }
-                        ?.getOrNull(previous.guideProgramIndex)
-                    val updatedChannelPrograms = channelId?.let(indexedPrograms::get).orEmpty()
-                    val preservedIndex = previouslySelected?.let { selected ->
-                        updatedChannelPrograms.indexOfFirst { candidate ->
-                            candidate.id == selected.id || candidate.sameScheduleSlot(selected)
-                        }
-                    } ?: -1
-                    updated = updated.copy(
-                        guideProgramIndex = if (preservedIndex >= 0) preservedIndex else {
-                            guideProgramIndexAt(
-                                channels,
-                                previous.guideChannelIndex,
-                                previous.guideAnchor ?: Instant.now(),
-                                indexedPrograms,
-                            )
-                        },
-                    )
+                // Programme indexing can take long enough for profile restoration,
+                // channel tuning or an overlay change to complete meanwhile. Merge
+                // into the latest state atomically instead of publishing the stale
+                // snapshot from before the background work.
+                mutableState.update { latest ->
+                    var updated = GuideStateMerger.merge(latest, indexedPrograms)
+                    if (latest.overlay == Overlay.GUIDE) {
+                        val channels = guideChannels(updated)
+                        val channelId = channels.getOrNull(latest.guideChannelIndex)?.id
+                        val previouslySelected = channelId?.let { latest.programsByChannel[it] }
+                            ?.getOrNull(latest.guideProgramIndex)
+                        val updatedChannelPrograms = channelId?.let(indexedPrograms::get).orEmpty()
+                        val preservedIndex = previouslySelected?.let { selected ->
+                            updatedChannelPrograms.indexOfFirst { candidate ->
+                                candidate.id == selected.id || candidate.sameScheduleSlot(selected)
+                            }
+                        } ?: -1
+                        updated = updated.copy(
+                            guideProgramIndex = if (preservedIndex >= 0) preservedIndex else {
+                                guideProgramIndexAt(
+                                    channels,
+                                    latest.guideChannelIndex,
+                                    latest.guideAnchor ?: Instant.now(),
+                                    indexedPrograms,
+                                )
+                            },
+                        )
+                    }
+                    updated
                 }
-                mutableState.value = updated
             }
         }
     }
@@ -316,10 +327,10 @@ class TvViewModel(
         viewModelScope.launch {
             repository.saveSelectedProfile(profile.id)
             val firstLoad = mutableState.value.channels.isEmpty()
-            mutableState.value = mutableState.value.copy(selectedProfileId = profile.id, loading = firstLoad)
+            mutableState.update { it.copy(selectedProfileId = profile.id, loading = firstLoad) }
             runCatching { repository.refresh(profile.id) }
                 .onFailure { if (mutableState.value.channels.isEmpty()) showError(it) }
-            mutableState.value = mutableState.value.copy(loading = false)
+            mutableState.update { it.copy(loading = false) }
         }
     }
 
@@ -329,7 +340,7 @@ class TvViewModel(
             loadProfiles()
             return
         }
-        mutableState.value = mutableState.value.copy(selectedProfileId = remembered)
+        mutableState.update { it.copy(selectedProfileId = remembered) }
         tuneInitialChannelIfNeeded()
         val hasCachedChannels = repository.channels.first().isNotEmpty()
         if (hasCachedChannels) {
@@ -342,7 +353,7 @@ class TvViewModel(
             // download back so it doesn't compete with the first video segments.
             withTimeoutOrNull(STARTUP_REFRESH_DEFER_MS) { state.first { it.videoVisible } }
         } else {
-            mutableState.value = mutableState.value.copy(loading = true)
+            mutableState.update { it.copy(loading = true) }
         }
         try {
             repository.refresh(remembered)
@@ -351,12 +362,13 @@ class TvViewModel(
         } catch (error: Exception) {
             if (mutableState.value.channels.isEmpty()) showError(error)
         } finally {
-            if (!hasCachedChannels) mutableState.value = mutableState.value.copy(loading = false)
+            if (!hasCachedChannels) mutableState.update { it.copy(loading = false) }
+            tuneInitialChannelIfNeeded()
         }
     }
 
     private suspend fun loadProfiles() {
-        mutableState.value = mutableState.value.copy(loading = true)
+        mutableState.update { it.copy(loading = true) }
         try {
             val profiles = withTimeoutOrNull(20_000L) { repository.profiles() }
                 ?: error("Profiilide laadimine aegus")
@@ -366,17 +378,19 @@ class TvViewModel(
             if (selected != null && selected.id != remembered) {
                 repository.saveSelectedProfile(selected.id)
             }
-            mutableState.value = mutableState.value.copy(
-                profiles = profiles,
-                selectedProfileId = selected?.id,
-                loading = false,
-            )
+            mutableState.update {
+                it.copy(
+                    profiles = profiles,
+                    selectedProfileId = selected?.id,
+                    loading = false,
+                )
+            }
             if (selected != null) repository.refresh(selected.id)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
             showError(error)
-            mutableState.value = mutableState.value.copy(loading = false)
+            mutableState.update { it.copy(loading = false) }
         }
     }
 
@@ -808,14 +822,16 @@ class TvViewModel(
     }
 
     private fun publishScheduledProgramActions() {
-        mutableState.value = mutableState.value.copy(
-            scheduledReminderIds = scheduledProgramActions.values
-                .filter(ScheduledProgramAction::reminder)
-                .mapTo(mutableSetOf(), ScheduledProgramAction::programId),
-            scheduledAutoTuneIds = scheduledProgramActions.values
-                .filter(ScheduledProgramAction::autoTune)
-                .mapTo(mutableSetOf(), ScheduledProgramAction::programId),
-        )
+        mutableState.update {
+            it.copy(
+                scheduledReminderIds = scheduledProgramActions.values
+                    .filter(ScheduledProgramAction::reminder)
+                    .mapTo(mutableSetOf(), ScheduledProgramAction::programId),
+                scheduledAutoTuneIds = scheduledProgramActions.values
+                    .filter(ScheduledProgramAction::autoTune)
+                    .mapTo(mutableSetOf(), ScheduledProgramAction::programId),
+            )
+        }
     }
 
     private suspend fun runProgramActionScheduler() {
@@ -2273,6 +2289,12 @@ internal object SearchSelectionResolver {
         if (resultCount <= 0) return -1
         return (currentIndex + direction.coerceIn(-1, 1)).coerceIn(-1, resultCount - 1)
     }
+}
+
+internal object GuideStateMerger {
+    /** Replaces only guide data, preserving startup and playback fields from the latest state. */
+    fun merge(latest: TvUiState, indexedPrograms: Map<String, List<Program>>): TvUiState =
+        latest.copy(programsByChannel = indexedPrograms)
 }
 
 /** Üks õhtukava rida: saade koos kanaliga, millel see jookseb. */

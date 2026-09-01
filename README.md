@@ -18,6 +18,8 @@ Mitteametlik Android TV klient kiireks ja puldisõbralikuks Go3 otse-TV vaatamis
 - Go3 vaatamisprofiilid ning turvaline QR-/seadmekoodiga sidumine;
 - Android MediaSessioni tugi, et telefon ja süsteem näitaksid kanalit ning saadet;
 - täisekraanil avatav ilmateade hetke-, tunni- ja nelja päeva prognoosiga;
+- punase nupuga avatav „Täna õhtul” vaade lemmikkanalite saadete, meeldetuletuste ja automaatlülitustega;
+- rohelise nupuga avatavad valitud peatuse järgmised ühistranspordi väljumised;
 - serveripoolse vaatamisseansi korrektne sulgemine kanali vahetamisel, rakendusest väljumisel ja unerežiimis.
 
 ## Nõuded
@@ -63,7 +65,7 @@ Luba teleris arendaja valikud ja Wireless debugging, ühenda arvuti teleriga nin
 
 ```bash
 adb connect TELERI_IP:ADB_PORT
-adb install -r Go3-TV-Plus-0.4.28.apk
+adb install -r Go3-TV-Plus-0.4.30.apk
 ```
 
 `-r` uuendab olemasolevat rakendust ja jätab sidumise ning seaded alles. Kui Android kuvab `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, on sama paketiga rakendus allkirjastatud teise võtmega. Vana rakenduse eemaldamine lahendab konflikti, kuid kustutab selle kohalikud seaded ja konto sidumise.
@@ -95,6 +97,8 @@ Parooli rakendusse ei sisestata ega salvestata. Tokenid hoitakse Android Keystor
 | EPG-s `sinine` | Lisa või eemalda automaatne kanalile lülitumine |
 | Täisekraanil `sinine` | Lülita kell sisse või välja; valik jäetakse meelde |
 | Täisekraanil `kollane` | Ava ilmateade; `kollane` või `BACK` sulgeb selle |
+| Täisekraanil `punane` | Ava „Täna õhtul” saatekava; `punane` või `BACK` sulgeb selle |
+| Täisekraanil `roheline` | Ava ühistranspordi väljumised; `roheline` või `BACK` sulgeb selle |
 | `GUIDE / MENU` | Ava EPG, kui puldil vastav nupp leidub |
 | `1–9`, seejärel `0–9` | Sisesta 1–3-kohaline kanalinumber; häälestus pärast sisestuspausi |
 | `0` eraldi | Vaheta eelmisele kanalile; korduv vajutus lülitab kahe viimase kanali vahel |
