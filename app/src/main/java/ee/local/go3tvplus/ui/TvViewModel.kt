@@ -47,10 +47,15 @@ import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 
-enum class Overlay {
-    NONE, CHANNEL_RAIL, GUIDE, APP_SETTINGS, CHANNEL_SETTINGS, PROFILE_SETTINGS,
-    AUDIO_SETTINGS, SUBTITLE_SETTINGS, DISPLAY_SETTINGS, WEATHER_LOCATION, WEATHER,
-    TRANSIT_STOP_SETTINGS, TRANSIT, SEEK,
+/**
+ * [returnsToParent] — BACK sellelt overlay'lt naaseb [TvUiState.settingsReturnOverlay]
+ * ekraanile; muidu sulgub overlay otse pildile (NONE).
+ */
+enum class Overlay(val returnsToParent: Boolean = false) {
+    NONE, CHANNEL_RAIL, GUIDE, APP_SETTINGS,
+    CHANNEL_SETTINGS(true), PROFILE_SETTINGS(true), AUDIO_SETTINGS(true),
+    SUBTITLE_SETTINGS(true), DISPLAY_SETTINGS(true), WEATHER_LOCATION(true),
+    WEATHER(true), TRANSIT_STOP_SETTINGS(true), TRANSIT(true), SEEK,
 }
 
 data class TvUiState(
@@ -487,13 +492,8 @@ class TvViewModel(
                     seekCloseJob?.cancel()
                 }
                 if (snapshot.overlay == Overlay.TRANSIT) transitRefreshJob?.cancel()
-                val returnOverlay = if (
-                    snapshot.overlay == Overlay.CHANNEL_SETTINGS || snapshot.overlay == Overlay.PROFILE_SETTINGS ||
-                    snapshot.overlay == Overlay.AUDIO_SETTINGS || snapshot.overlay == Overlay.SUBTITLE_SETTINGS ||
-                    snapshot.overlay == Overlay.DISPLAY_SETTINGS || snapshot.overlay == Overlay.WEATHER_LOCATION ||
-                    snapshot.overlay == Overlay.WEATHER || snapshot.overlay == Overlay.TRANSIT_STOP_SETTINGS ||
-                    snapshot.overlay == Overlay.TRANSIT
-                ) snapshot.settingsReturnOverlay else Overlay.NONE
+                val returnOverlay =
+                    if (snapshot.overlay.returnsToParent) snapshot.settingsReturnOverlay else Overlay.NONE
                 mutableState.value = snapshot.copy(overlay = returnOverlay, numberInput = "")
                 return true
             }
