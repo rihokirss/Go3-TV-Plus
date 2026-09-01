@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import android.util.Log
 import ee.local.go3tvplus.domain.AuthTokens
 import ee.local.go3tvplus.domain.TokenStore
 import org.json.JSONObject
@@ -17,6 +18,8 @@ import javax.crypto.spec.GCMParameterSpec
 class KeystoreTokenStore(context: Context) : TokenStore {
     private val preferences = context.getSharedPreferences("secure_tokens", Context.MODE_PRIVATE)
 
+    override fun hasStoredPayload(): Boolean = preferences.contains(PAYLOAD)
+
     override fun load(): AuthTokens? = runCatching {
         val encoded = preferences.getString(PAYLOAD, null) ?: return null
         val bytes = Base64.decode(encoded, Base64.NO_WRAP)
@@ -24,15 +27,18 @@ class KeystoreTokenStore(context: Context) : TokenStore {
         val iv = bytes.copyOfRange(1, 1 + ivLength)
         val ciphertext = bytes.copyOfRange(1 + ivLength, bytes.size)
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(128, iv))
+        val key = existingSecretKey() ?: error("Secure key is temporarily unavailable")
+        cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
         val json = JSONObject(String(cipher.doFinal(ciphertext), Charsets.UTF_8))
         AuthTokens(
             accessToken = json.getString("accessToken"),
             refreshToken = json.optString("refreshToken").takeIf(String::isNotBlank),
             expiresAt = Instant.ofEpochMilli(json.getLong("expiresAt")),
         )
-    }.getOrElse {
-        clear()
+    }.getOrElse { error ->
+        // Never log credentials or encrypted payloads. The exception type is
+        // sufficient to diagnose vendor Keystore failures after app updates.
+        Log.w(TAG, "Stored account could not be restored: ${error.javaClass.simpleName}")
         null
     }
 
@@ -44,19 +50,27 @@ class KeystoreTokenStore(context: Context) : TokenStore {
             .toString()
             .toByteArray(Charsets.UTF_8)
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, secretKey())
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
         val encrypted = cipher.doFinal(json)
         val payload = byteArrayOf(cipher.iv.size.toByte()) + cipher.iv + encrypted
-        preferences.edit().putString(PAYLOAD, Base64.encodeToString(payload, Base64.NO_WRAP)).apply()
+        check(
+            preferences.edit()
+                .putString(PAYLOAD, Base64.encodeToString(payload, Base64.NO_WRAP))
+                .commit(),
+        ) { "Konto turvaline salvestamine ebaõnnestus" }
     }
 
     override fun clear() {
-        preferences.edit().clear().apply()
+        preferences.edit().clear().commit()
     }
 
-    private fun secretKey(): SecretKey {
+    private fun existingSecretKey(): SecretKey? {
         val keyStore = KeyStore.getInstance(KEYSTORE).apply { load(null) }
-        (keyStore.getKey(ALIAS, null) as? SecretKey)?.let { return it }
+        return keyStore.getKey(ALIAS, null) as? SecretKey
+    }
+
+    private fun getOrCreateSecretKey(): SecretKey {
+        existingSecretKey()?.let { return it }
         return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE).run {
             init(
                 KeyGenParameterSpec.Builder(
@@ -71,6 +85,7 @@ class KeystoreTokenStore(context: Context) : TokenStore {
     }
 
     private companion object {
+        const val TAG = "Go3TokenStore"
         const val KEYSTORE = "AndroidKeyStore"
         const val ALIAS = "go3_tv_auth_v1"
         const val TRANSFORMATION = "AES/GCM/NoPadding"

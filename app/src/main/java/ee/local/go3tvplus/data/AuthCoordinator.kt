@@ -24,14 +24,37 @@ class AuthCoordinator(
 ) {
     // Tokens are decrypted from the Android Keystore exactly once; every later
     // call — including the playback-critical liveTicket path — stays in memory.
-    @Volatile private var cachedTokens: AuthTokens? = tokenStore.load()
+    private val initialTokens = tokenStore.load()
+    private val storedPayloadExists = initialTokens != null || tokenStore.hasStoredPayload()
+    @Volatile private var cachedTokens: AuthTokens? = initialTokens
     private val mutableState = MutableStateFlow<DeviceAuthState>(
-        if (cachedTokens != null) DeviceAuthState.Approved else DeviceAuthState.Idle,
+        when {
+            cachedTokens != null -> DeviceAuthState.Approved
+            storedPayloadExists -> DeviceAuthState.Restoring
+            else -> DeviceAuthState.Idle
+        },
     )
     val state: StateFlow<DeviceAuthState> = mutableState.asStateFlow()
     private var authJob: Job? = null
+    private var restoreJob: Job? = null
+
+    init {
+        if (cachedTokens == null && storedPayloadExists) {
+            restoreJob = scope.launch {
+                for (delayMs in listOf(250L, 1_000L, 3_000L)) {
+                    delay(delayMs)
+                    val restored = tokenStore.load() ?: continue
+                    cachedTokens = restored
+                    mutableState.value = DeviceAuthState.Approved
+                    return@launch
+                }
+                mutableState.value = DeviceAuthState.Idle
+            }
+        }
+    }
 
     fun start() {
+        restoreJob?.cancel()
         authJob?.cancel()
         authJob = scope.launch {
             mutableState.value = DeviceAuthState.RequestingCode
@@ -63,6 +86,7 @@ class AuthCoordinator(
     }
 
     fun signOut() {
+        restoreJob?.cancel()
         authJob?.cancel()
         cachedTokens = null
         tokenStore.clear()

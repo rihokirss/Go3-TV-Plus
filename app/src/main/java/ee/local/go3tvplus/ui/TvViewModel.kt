@@ -17,6 +17,9 @@ import ee.local.go3tvplus.domain.PlaybackTicket
 import ee.local.go3tvplus.domain.Profile
 import ee.local.go3tvplus.domain.Program
 import ee.local.go3tvplus.domain.ProgramWindow
+import ee.local.go3tvplus.domain.TransitBoard
+import ee.local.go3tvplus.domain.TransitStopSelection
+import ee.local.go3tvplus.domain.DEFAULT_MURASTE_STOP
 import ee.local.go3tvplus.domain.WeatherForecast
 import ee.local.go3tvplus.domain.WeatherLocation
 import ee.local.go3tvplus.player.TvPlayer
@@ -46,7 +49,8 @@ import java.time.ZoneId
 
 enum class Overlay {
     NONE, CHANNEL_RAIL, GUIDE, APP_SETTINGS, CHANNEL_SETTINGS, PROFILE_SETTINGS,
-    AUDIO_SETTINGS, SUBTITLE_SETTINGS, DISPLAY_SETTINGS, WEATHER_LOCATION, WEATHER, SEEK,
+    AUDIO_SETTINGS, SUBTITLE_SETTINGS, DISPLAY_SETTINGS, WEATHER_LOCATION, WEATHER,
+    TRANSIT_STOP_SETTINGS, TRANSIT, SEEK,
 }
 
 data class TvUiState(
@@ -85,7 +89,18 @@ data class TvUiState(
     val weatherError: String? = null,
     val weatherSearchQuery: String = "",
     val weatherSearchResults: List<WeatherLocation> = emptyList(),
-    val weatherSearchIndex: Int = 0,
+    val weatherSearchIndex: Int = -1,
+    val transitBoard: TransitBoard? = null,
+    val transitStop: TransitStopSelection = DEFAULT_MURASTE_STOP,
+    val transitLoading: Boolean = false,
+    val transitError: String? = null,
+    val transitDirectionIndex: Int = 0,
+    val transitDepartureIndex: Int = 0,
+    val transitStopSearchQuery: String = "",
+    val transitStopSearchResults: List<TransitStopSelection> = emptyList(),
+    val transitStopSearchIndex: Int = -1,
+    val transitStopLoading: Boolean = false,
+    val transitStopError: String? = null,
     val favoriteChannelIds: Set<String> = emptySet(),
     val numberInput: String = "",
     /** Set while a catchup stream plays, so overlays show the right programme. */
@@ -112,7 +127,12 @@ class TvViewModel(
     isDemo: Boolean,
 ) : ViewModel(), TvPlayer.Listener {
     val mediaPlayer get() = tvPlayer.player
-    private val mutableState = MutableStateFlow(TvUiState(isDemo = isDemo))
+    private val mutableState = MutableStateFlow(
+        TvUiState(
+            auth = authCoordinator.state.value,
+            isDemo = isDemo,
+        ),
+    )
     val state: StateFlow<TvUiState> = mutableState.asStateFlow()
     private var digitJob: Job? = null
     private var heldDigitKey: Int? = null
@@ -128,6 +148,8 @@ class TvViewModel(
     private var playbackRetryJob: Job? = null
     private var programActionJob: Job? = null
     private var noticeJob: Job? = null
+    private var startupRecoveryJob: Job? = null
+    private var transitRefreshJob: Job? = null
     private var activeTicket: PlaybackTicket? = null
     private var pendingChannelId: String? = null
     private var pendingSeekOverlayChannelId: String? = null
@@ -170,6 +192,9 @@ class TvViewModel(
                 refreshWeather(location)
             }
         }
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(transitStop = repository.transitStop())
+        }
         programActionJob = viewModelScope.launch {
             val now = System.currentTimeMillis()
             scheduledProgramActions = repository.scheduledProgramActions()
@@ -182,7 +207,12 @@ class TvViewModel(
         viewModelScope.launch {
             authCoordinator.state.collect { auth ->
                 mutableState.value = mutableState.value.copy(auth = auth, error = null)
-                if (auth == DeviceAuthState.Approved) restoreProfileOrLoadProfiles()
+                if (auth == DeviceAuthState.Approved) {
+                    startStartupRecovery()
+                } else {
+                    startupRecoveryJob?.cancel()
+                    startupRecoveryJob = null
+                }
             }
         }
         viewModelScope.launch {
@@ -260,6 +290,19 @@ class TvViewModel(
 
     fun startPairing() = authCoordinator.start()
 
+    private fun startStartupRecovery() {
+        if (startupRecoveryJob?.isActive == true) return
+        startupRecoveryJob = viewModelScope.launch {
+            try {
+                restoreProfileOrLoadProfiles()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                showError(error)
+            }
+        }
+    }
+
     fun selectProfile(profile: Profile) {
         viewModelScope.launch {
             repository.saveSelectedProfile(profile.id)
@@ -272,7 +315,7 @@ class TvViewModel(
     }
 
     private suspend fun restoreProfileOrLoadProfiles() {
-        val remembered = repository.selectedProfileId()
+        val remembered = withTimeoutOrNull(5_000L) { repository.selectedProfileId() }
         if (remembered == null) {
             loadProfiles()
             return
@@ -281,6 +324,11 @@ class TvViewModel(
         tuneInitialChannelIfNeeded()
         val hasCachedChannels = repository.channels.first().isNotEmpty()
         if (hasCachedChannels) {
+            // The Room flow and profile restoration start concurrently. Wait
+            // briefly for the cached channel list to reach UI state, then tune
+            // explicitly instead of depending on collector timing.
+            withTimeoutOrNull(STARTUP_REFRESH_DEFER_MS) { state.first { it.channels.isNotEmpty() } }
+            tuneInitialChannelIfNeeded()
             // Cached channels start playing right away; hold the channel/EPG
             // download back so it doesn't compete with the first video segments.
             withTimeoutOrNull(STARTUP_REFRESH_DEFER_MS) { state.first { it.videoVisible } }
@@ -289,6 +337,8 @@ class TvViewModel(
         }
         try {
             repository.refresh(remembered)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (error: Exception) {
             if (mutableState.value.channels.isEmpty()) showError(error)
         } finally {
@@ -299,7 +349,8 @@ class TvViewModel(
     private suspend fun loadProfiles() {
         mutableState.value = mutableState.value.copy(loading = true)
         try {
-            val profiles = repository.profiles()
+            val profiles = withTimeoutOrNull(20_000L) { repository.profiles() }
+                ?: error("Profiilide laadimine aegus")
             val remembered = repository.selectedProfileId()
             val selected = profiles.firstOrNull { it.id == remembered }
                 ?: profiles.singleOrNull()
@@ -312,6 +363,8 @@ class TvViewModel(
                 loading = false,
             )
             if (selected != null) repository.refresh(selected.id)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (error: Exception) {
             showError(error)
             mutableState.value = mutableState.value.copy(loading = false)
@@ -327,6 +380,18 @@ class TvViewModel(
             return true
         }
         val snapshot = mutableState.value
+        if (snapshot.auth != DeviceAuthState.Approved && event.keyCode.isConfirmKey()) {
+            if (
+                event.action == KeyEvent.ACTION_DOWN &&
+                event.repeatCount == 0 &&
+                (snapshot.auth == DeviceAuthState.Idle ||
+                    snapshot.auth == DeviceAuthState.Expired ||
+                    snapshot.auth is DeviceAuthState.Failed)
+            ) {
+                startPairing()
+            }
+            return true
+        }
         if (snapshot.error != null) {
             if (event.action != KeyEvent.ACTION_DOWN) return true
             return when (event.keyCode) {
@@ -360,6 +425,17 @@ class TvViewModel(
         }
         if (snapshot.overlay == Overlay.WEATHER && event.keyCode == KeyEvent.KEYCODE_PROG_YELLOW) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) closeWeather()
+            return true
+        }
+        if (snapshot.overlay == Overlay.TRANSIT && event.keyCode == KeyEvent.KEYCODE_PROG_GREEN) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) closeTransit()
+            return true
+        }
+        if (
+            event.keyCode == KeyEvent.KEYCODE_PROG_GREEN &&
+            snapshot.overlay == Overlay.NONE && snapshot.numberInput.isEmpty() && snapshot.currentChannelId != null
+        ) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) openTransit()
             return true
         }
         if (
@@ -410,11 +486,13 @@ class TvViewModel(
                     seekUiJob?.cancel()
                     seekCloseJob?.cancel()
                 }
+                if (snapshot.overlay == Overlay.TRANSIT) transitRefreshJob?.cancel()
                 val returnOverlay = if (
                     snapshot.overlay == Overlay.CHANNEL_SETTINGS || snapshot.overlay == Overlay.PROFILE_SETTINGS ||
                     snapshot.overlay == Overlay.AUDIO_SETTINGS || snapshot.overlay == Overlay.SUBTITLE_SETTINGS ||
                     snapshot.overlay == Overlay.DISPLAY_SETTINGS || snapshot.overlay == Overlay.WEATHER_LOCATION ||
-                    snapshot.overlay == Overlay.WEATHER
+                    snapshot.overlay == Overlay.WEATHER || snapshot.overlay == Overlay.TRANSIT_STOP_SETTINGS ||
+                    snapshot.overlay == Overlay.TRANSIT
                 ) snapshot.settingsReturnOverlay else Overlay.NONE
                 mutableState.value = snapshot.copy(overlay = returnOverlay, numberInput = "")
                 return true
@@ -446,6 +524,8 @@ class TvViewModel(
             Overlay.DISPLAY_SETTINGS -> handleDisplaySettingsKey(event.keyCode)
             Overlay.WEATHER_LOCATION -> handleWeatherLocationKey(event.keyCode)
             Overlay.WEATHER -> true
+            Overlay.TRANSIT_STOP_SETTINGS -> handleTransitStopSettingsKey(event.keyCode)
+            Overlay.TRANSIT -> handleTransitKey(event.keyCode)
             Overlay.SEEK -> handleSeekKey(event.keyCode)
             Overlay.NONE -> handlePlayerKey(event.keyCode)
         }
@@ -1039,7 +1119,7 @@ class TvViewModel(
         val snapshot = mutableState.value
         when (keyCode) {
             KeyEvent.KEYCODE_DPAD_UP -> mutableState.value = snapshot.copy(appSettingsIndex = (snapshot.appSettingsIndex - 1).coerceAtLeast(0))
-            KeyEvent.KEYCODE_DPAD_DOWN -> mutableState.value = snapshot.copy(appSettingsIndex = (snapshot.appSettingsIndex + 1).coerceAtMost(6))
+            KeyEvent.KEYCODE_DPAD_DOWN -> mutableState.value = snapshot.copy(appSettingsIndex = (snapshot.appSettingsIndex + 1).coerceAtMost(7))
             KeyEvent.KEYCODE_DPAD_RIGHT,
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                 when (snapshot.appSettingsIndex) {
@@ -1049,7 +1129,8 @@ class TvViewModel(
                     3 -> openSubtitleSettings()
                     4 -> openDisplaySettings()
                     5 -> openWeatherLocationSettings(Overlay.APP_SETTINGS)
-                    6 -> refreshChannelPackage()
+                    6 -> openTransitStopSettings()
+                    7 -> refreshChannelPackage()
                 }
             }
             else -> return false
@@ -1244,6 +1325,176 @@ class TvViewModel(
         )
     }
 
+    private fun openTransit() {
+        transitRefreshJob?.cancel()
+        mutableState.value = mutableState.value.copy(
+            overlay = Overlay.TRANSIT,
+            settingsReturnOverlay = Overlay.NONE,
+            transitError = null,
+            transitDepartureIndex = 0,
+            transitDirectionIndex = mutableState.value.transitDirectionIndex
+                .coerceIn(0, (mutableState.value.transitStop.platforms.lastIndex).coerceAtLeast(0)),
+        )
+        transitRefreshJob = viewModelScope.launch {
+            while (mutableState.value.overlay == Overlay.TRANSIT) {
+                refreshTransitBoard()
+                delay(TRANSIT_REFRESH_INTERVAL_MS)
+            }
+        }
+    }
+
+    private suspend fun refreshTransitBoard() {
+        mutableState.value = mutableState.value.copy(transitLoading = true, transitError = null)
+        runCatching { repository.transitDepartures(mutableState.value.transitStop) }
+            .onSuccess { board ->
+                if (mutableState.value.overlay == Overlay.TRANSIT) {
+                    mutableState.value = mutableState.value.copy(
+                        transitBoard = board,
+                        transitLoading = false,
+                        transitError = null,
+                    )
+                }
+            }
+            .onFailure { error ->
+                if (mutableState.value.overlay == Overlay.TRANSIT) {
+                    mutableState.value = mutableState.value.copy(
+                        transitLoading = false,
+                        transitError = "Bussiaegade värskendamine ebaõnnestus: ${error.message ?: "tundmatu viga"}",
+                    )
+                }
+            }
+    }
+
+    private fun closeTransit() {
+        transitRefreshJob?.cancel()
+        mutableState.value = mutableState.value.copy(
+            overlay = mutableState.value.settingsReturnOverlay,
+            transitLoading = false,
+            transitError = null,
+        )
+    }
+
+    private fun handleTransitKey(keyCode: Int): Boolean {
+        val snapshot = mutableState.value
+        val directionStopCode = snapshot.transitStop.platforms
+            .getOrNull(snapshot.transitDirectionIndex)?.code.orEmpty()
+        val departureCount = snapshot.transitBoard?.departures
+            ?.count { it.stopCode == directionStopCode }
+            ?: 0
+        when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> mutableState.value = snapshot.copy(
+                transitDirectionIndex = (snapshot.transitDirectionIndex - 1).coerceAtLeast(0),
+                transitDepartureIndex = 0,
+            )
+            KeyEvent.KEYCODE_DPAD_RIGHT -> mutableState.value = snapshot.copy(
+                transitDirectionIndex = (snapshot.transitDirectionIndex + 1)
+                    .coerceAtMost(snapshot.transitStop.platforms.lastIndex.coerceAtLeast(0)),
+                transitDepartureIndex = 0,
+            )
+            KeyEvent.KEYCODE_DPAD_UP -> mutableState.value = snapshot.copy(
+                transitDepartureIndex = (snapshot.transitDepartureIndex - 1).coerceAtLeast(0),
+            )
+            KeyEvent.KEYCODE_DPAD_DOWN -> mutableState.value = snapshot.copy(
+                transitDepartureIndex = (snapshot.transitDepartureIndex + 1)
+                    .coerceAtMost((departureCount - 1).coerceAtLeast(0)),
+            )
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> openTransit()
+        }
+        return true
+    }
+
+    private fun openTransitStopSettings() {
+        val stop = mutableState.value.transitStop
+        mutableState.value = mutableState.value.copy(
+            overlay = Overlay.TRANSIT_STOP_SETTINGS,
+            settingsReturnOverlay = Overlay.APP_SETTINGS,
+            transitStopSearchQuery = stop.name,
+            transitStopSearchResults = listOf(stop),
+            transitStopSearchIndex = -1,
+            transitStopError = null,
+        )
+    }
+
+    fun updateTransitStopSearchQuery(query: String) {
+        mutableState.value = mutableState.value.copy(
+            transitStopSearchQuery = query.take(50),
+            transitStopSearchResults = emptyList(),
+            transitStopSearchIndex = -1,
+            transitStopError = null,
+        )
+    }
+
+    fun searchTransitStops() {
+        val query = mutableState.value.transitStopSearchQuery.trim()
+        if (query.length < 2 || mutableState.value.transitStopLoading) return
+        viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(transitStopLoading = true, transitStopError = null)
+            runCatching { repository.searchTransitStops(query) }
+                .onSuccess { results ->
+                    mutableState.value = mutableState.value.copy(
+                        transitStopLoading = false,
+                        transitStopSearchResults = results,
+                        transitStopSearchIndex = -1,
+                        transitStopError = if (results.isEmpty()) "Peatust ei leitud" else null,
+                    )
+                }
+                .onFailure { error ->
+                    mutableState.value = mutableState.value.copy(
+                        transitStopLoading = false,
+                        transitStopError = "Peatuse otsing ebaõnnestus: ${error.message ?: "tundmatu viga"}",
+                    )
+                }
+        }
+    }
+
+    fun handleFocusedSearchKey(keyCode: Int) {
+        when (mutableState.value.overlay) {
+            Overlay.WEATHER_LOCATION -> handleWeatherLocationKey(keyCode)
+            Overlay.TRANSIT_STOP_SETTINGS -> handleTransitStopSettingsKey(keyCode)
+            else -> Unit
+        }
+    }
+
+    private fun handleTransitStopSettingsKey(keyCode: Int): Boolean {
+        val snapshot = mutableState.value
+        when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_UP -> mutableState.value = snapshot.copy(
+                transitStopSearchIndex = SearchSelectionResolver.move(
+                    snapshot.transitStopSearchIndex,
+                    snapshot.transitStopSearchResults.size,
+                    -1,
+                ),
+            )
+            KeyEvent.KEYCODE_DPAD_DOWN -> mutableState.value = snapshot.copy(
+                transitStopSearchIndex = SearchSelectionResolver.move(
+                    snapshot.transitStopSearchIndex,
+                    snapshot.transitStopSearchResults.size,
+                    1,
+                ),
+            )
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                val selected = snapshot.transitStopSearchResults.getOrNull(snapshot.transitStopSearchIndex)
+                if (selected == null) searchTransitStops() else selectTransitStop(selected)
+            }
+            else -> return false
+        }
+        return true
+    }
+
+    private fun selectTransitStop(stop: TransitStopSelection) {
+        mutableState.value = mutableState.value.copy(
+            overlay = mutableState.value.settingsReturnOverlay,
+            transitStop = stop,
+            transitBoard = null,
+            transitDirectionIndex = 0,
+            transitDepartureIndex = 0,
+            transitStopSearchQuery = stop.name,
+            transitStopSearchResults = emptyList(),
+            transitStopError = null,
+        )
+        viewModelScope.launch { repository.saveTransitStop(stop) }
+    }
+
     private fun openWeatherLocationSettings(returnOverlay: Overlay) {
         val location = mutableState.value.weatherLocation
         mutableState.value = mutableState.value.copy(
@@ -1251,7 +1502,7 @@ class TvViewModel(
             settingsReturnOverlay = returnOverlay,
             weatherSearchQuery = location?.name.orEmpty(),
             weatherSearchResults = location?.let(::listOf).orEmpty(),
-            weatherSearchIndex = 0,
+            weatherSearchIndex = -1,
             weatherError = null,
         )
     }
@@ -1260,7 +1511,7 @@ class TvViewModel(
         mutableState.value = mutableState.value.copy(
             weatherSearchQuery = query.take(50),
             weatherSearchResults = emptyList(),
-            weatherSearchIndex = 0,
+            weatherSearchIndex = -1,
             weatherError = null,
         )
     }
@@ -1275,7 +1526,7 @@ class TvViewModel(
                     mutableState.value = mutableState.value.copy(
                         weatherLoading = false,
                         weatherSearchResults = results,
-                        weatherSearchIndex = 0,
+                        weatherSearchIndex = -1,
                         weatherError = if (results.isEmpty()) "Asulat ei leitud" else null,
                     )
                 }
@@ -1292,11 +1543,18 @@ class TvViewModel(
         val snapshot = mutableState.value
         when (keyCode) {
             KeyEvent.KEYCODE_DPAD_UP -> mutableState.value = snapshot.copy(
-                weatherSearchIndex = (snapshot.weatherSearchIndex - 1).coerceAtLeast(0),
+                weatherSearchIndex = SearchSelectionResolver.move(
+                    snapshot.weatherSearchIndex,
+                    snapshot.weatherSearchResults.size,
+                    -1,
+                ),
             )
             KeyEvent.KEYCODE_DPAD_DOWN -> mutableState.value = snapshot.copy(
-                weatherSearchIndex = (snapshot.weatherSearchIndex + 1)
-                    .coerceAtMost(snapshot.weatherSearchResults.lastIndex.coerceAtLeast(0)),
+                weatherSearchIndex = SearchSelectionResolver.move(
+                    snapshot.weatherSearchIndex,
+                    snapshot.weatherSearchResults.size,
+                    1,
+                ),
             )
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                 val selected = snapshot.weatherSearchResults.getOrNull(snapshot.weatherSearchIndex)
@@ -1467,6 +1725,7 @@ class TvViewModel(
         channelTuneJob?.cancel()
         channelTuneJob = null
         playbackRetryJob?.cancel()
+        transitRefreshJob?.cancel()
         playbackRetryJob = null
         val generation = ++tuneGeneration
         tuneJob?.cancel()
@@ -1704,7 +1963,12 @@ class TvViewModel(
             tune(channel, wakeRecovery = true)
             return
         }
-        val profileId = mutableState.value.selectedProfileId ?: return
+        val profileId = mutableState.value.selectedProfileId
+        if (profileId == null) {
+            mutableState.value = mutableState.value.copy(error = null, errorActionIndex = 0, loading = true)
+            startStartupRecovery()
+            return
+        }
         viewModelScope.launch {
             mutableState.value = mutableState.value.copy(error = null, errorActionIndex = 0, loading = true)
             runCatching { repository.refresh(profileId) }
@@ -1718,6 +1982,8 @@ class TvViewModel(
     fun onAppBackgrounded() {
         if (wasBackgrounded) return
         wasBackgrounded = true
+        startupRecoveryJob?.cancel()
+        startupRecoveryJob = null
         mutableState.value = mutableState.value.copy(overlay = Overlay.NONE, numberInput = "")
         tuneJob?.cancel()
         channelTuneJob?.cancel()
@@ -1739,8 +2005,16 @@ class TvViewModel(
     }
 
     fun onAppForegrounded() {
+        val snapshot = mutableState.value
+        if (
+            snapshot.auth == DeviceAuthState.Approved &&
+            (snapshot.selectedProfileId == null || snapshot.channels.isEmpty() || snapshot.currentChannelId == null)
+        ) {
+            startStartupRecovery()
+        }
         if (!wasBackgrounded) return
         wasBackgrounded = false
+        if (snapshot.selectedProfileId == null || snapshot.channels.isEmpty() || snapshot.currentChannelId == null) return
         val channel = mutableState.value.channels.firstOrNull {
             it.id == mutableState.value.currentChannelId
         } ?: return
@@ -1800,6 +2074,7 @@ class TvViewModel(
         playbackHealthJob?.cancel()
         programActionJob?.cancel()
         noticeJob?.cancel()
+        startupRecoveryJob?.cancel()
         val sessionId = activeTicket?.playbackSessionId
         cleanupScope.launch { repository.closePlayback(sessionId) }
         tvPlayer.release()
@@ -1820,6 +2095,7 @@ private const val PROGRAM_ACTION_GRACE_MS = 5 * 60_000L
 private const val PROGRAM_ACTION_POLL_MS = 15_000L
 private const val PROGRAM_NOTICE_TIMEOUT_MS = 5_000L
 private const val CLOCK_NOTICE_TIMEOUT_MS = PROGRAM_NOTICE_TIMEOUT_MS
+private const val TRANSIT_REFRESH_INTERVAL_MS = 30_000L
 private val PROGRAM_COLOR_KEYS = setOf(
     KeyEvent.KEYCODE_PROG_RED,
     KeyEvent.KEYCODE_PROG_GREEN,
@@ -1880,6 +2156,13 @@ object ChannelNumberResolver {
 internal object RemoteShortcutResolver {
     fun usesPreviousChannel(digit: Int, pendingDigits: String, overlay: Overlay): Boolean =
         digit == 0 && pendingDigits.isEmpty() && overlay != Overlay.CHANNEL_SETTINGS
+}
+
+internal object SearchSelectionResolver {
+    fun move(currentIndex: Int, resultCount: Int, direction: Int): Int {
+        if (resultCount <= 0) return -1
+        return (currentIndex + direction.coerceIn(-1, 1)).coerceIn(-1, resultCount - 1)
+    }
 }
 
 internal object PreviousChannelResolver {

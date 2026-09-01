@@ -61,4 +61,14 @@ class RemoteShortcutResolverTest {
         assertEquals(10, DisplaySettingOptions.validSeekOverlaySeconds(99))
         assertEquals(10, DisplaySettingOptions.validSeekStepSeconds(99))
     }
+
+    @Test fun firstDownFromSearchFieldSelectsFirstResult() {
+        assertEquals(0, SearchSelectionResolver.move(currentIndex = -1, resultCount = 3, direction = 1))
+    }
+
+    @Test fun searchSelectionCanReturnToInputAndStaysWithinResults() {
+        assertEquals(-1, SearchSelectionResolver.move(currentIndex = 0, resultCount = 3, direction = -1))
+        assertEquals(2, SearchSelectionResolver.move(currentIndex = 2, resultCount = 3, direction = 1))
+        assertEquals(-1, SearchSelectionResolver.move(currentIndex = -1, resultCount = 0, direction = 1))
+    }
 }

@@ -3,6 +3,7 @@ package ee.local.go3tvplus.domain
 import java.time.Instant
 
 sealed interface DeviceAuthState {
+    data object Restoring : DeviceAuthState
     data object Idle : DeviceAuthState
     data object RequestingCode : DeviceAuthState
     data class AwaitingApproval(

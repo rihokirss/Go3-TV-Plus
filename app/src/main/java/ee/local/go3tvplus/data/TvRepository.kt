@@ -15,6 +15,7 @@ import ee.local.go3tvplus.domain.Profile
 import ee.local.go3tvplus.domain.Program
 import ee.local.go3tvplus.domain.ProgramWindow
 import ee.local.go3tvplus.domain.WeatherLocation
+import ee.local.go3tvplus.domain.TransitStopSelection
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
@@ -31,6 +32,7 @@ class TvRepository(
     private val database: AppDatabase,
     private val preferences: TvPreferences,
     private val weatherGateway: OpenMeteoWeatherGateway,
+    private val transitGateway: PeatusTransitGateway,
 ) {
     val channels: Flow<List<Channel>> = database.tvDao().observeChannels().map { rows -> rows.map { it.toDomain() } }
     val programs: Flow<List<Program>> = database.tvDao()
@@ -161,6 +163,10 @@ class TvRepository(
     suspend fun saveWeatherLocation(location: WeatherLocation) = preferences.saveWeatherLocation(location)
     suspend fun searchWeatherLocations(query: String) = weatherGateway.searchLocations(query)
     suspend fun weatherForecast(location: WeatherLocation) = weatherGateway.forecast(location)
+    suspend fun transitStop() = preferences.transitStopNow()
+    suspend fun saveTransitStop(stop: TransitStopSelection) = preferences.saveTransitStop(stop)
+    suspend fun searchTransitStops(query: String) = transitGateway.searchStops(query)
+    suspend fun transitDepartures(stop: TransitStopSelection) = transitGateway.departures(stop)
     suspend fun scheduledProgramActions() = preferences.scheduledProgramActionsNow()
     suspend fun saveScheduledProgramActions(actions: Collection<ScheduledProgramAction>) =
         preferences.saveScheduledProgramActions(actions)

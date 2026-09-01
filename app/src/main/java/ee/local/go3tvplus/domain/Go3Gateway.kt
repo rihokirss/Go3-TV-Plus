@@ -22,6 +22,7 @@ interface Go3Gateway {
 
 interface TokenStore {
     fun load(): AuthTokens?
+    fun hasStoredPayload(): Boolean = load() != null
     fun save(tokens: AuthTokens)
     fun clear()
 }

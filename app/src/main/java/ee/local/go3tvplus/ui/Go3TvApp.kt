@@ -6,6 +6,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.text.TextPaint
 import android.text.TextUtils
+import android.view.KeyEvent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -52,6 +53,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -80,6 +82,7 @@ import ee.local.go3tvplus.domain.DeviceAuthState
 import ee.local.go3tvplus.domain.Profile
 import ee.local.go3tvplus.domain.Program
 import ee.local.go3tvplus.domain.ProgramWindow
+import ee.local.go3tvplus.domain.TransitDeparture
 import ee.local.go3tvplus.domain.WeatherForecast
 import ee.local.go3tvplus.domain.WeatherLocation
 import ee.local.go3tvplus.R
@@ -97,7 +100,10 @@ fun Go3TvApp(viewModel: TvViewModel, player: Player) {
     MaterialTheme {
         Box(Modifier.fillMaxSize().background(Go3Colors.AppBackground)) {
             when {
+                state.auth == DeviceAuthState.Restoring -> StartupScreen()
                 state.auth != DeviceAuthState.Approved -> PairingScreen(state.auth, viewModel::startPairing)
+                state.selectedProfileId == null && state.profiles.isEmpty() && state.error != null ->
+                    StartupErrorScreen(state.error.orEmpty(), viewModel::retry)
                 state.selectedProfileId == null && state.profiles.isEmpty() -> StartupScreen()
                 state.selectedProfileId == null -> ProfileScreen(state.profiles, viewModel::selectProfile)
                 else -> PlayerScreen(
@@ -105,6 +111,9 @@ fun Go3TvApp(viewModel: TvViewModel, player: Player) {
                     player = player,
                     onWeatherQueryChange = viewModel::updateWeatherSearchQuery,
                     onWeatherSearch = viewModel::searchWeatherLocations,
+                    onTransitStopQueryChange = viewModel::updateTransitStopSearchQuery,
+                    onTransitStopSearch = viewModel::searchTransitStops,
+                    onSearchInputKey = viewModel::handleFocusedSearchKey,
                 )
             }
             if (state.isDemo) DemoBadge()
@@ -120,17 +129,53 @@ private fun StartupScreen() {
 }
 
 @Composable
-private fun PairingScreen(auth: DeviceAuthState, onStart: () -> Unit) {
+private fun StartupErrorScreen(message: String, onRetry: () -> Unit) {
+    val retryFocus = remember { FocusRequester() }
+    LaunchedEffect(message) {
+        delay(150)
+        retryFocus.requestFocus()
+    }
     Box(
         Modifier.fillMaxSize().background(Go3Brushes.fullscreenRadial),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            Text("Go3 TV+", color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Bold)
+            Text(message, color = Go3Colors.ErrorText, fontSize = 20.sp)
+            Button(onClick = onRetry, modifier = Modifier.focusRequester(retryFocus)) {
+                Text("Proovi uuesti")
+            }
+        }
+    }
+}
+
+@Composable
+private fun PairingScreen(auth: DeviceAuthState, onStart: () -> Unit) {
+    val actionFocus = remember { FocusRequester() }
+    LaunchedEffect(auth) {
+        if (auth == DeviceAuthState.Idle || auth == DeviceAuthState.Expired || auth is DeviceAuthState.Failed) {
+            repeat(4) { attempt ->
+                delay(if (attempt == 0) 150 else 350)
+                runCatching { actionFocus.requestFocus() }
+            }
+        }
+    }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Go3Brushes.fullscreenRadial),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Text("Go3 TV+", color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Bold)
             when (auth) {
+                DeviceAuthState.Restoring -> Unit
                 DeviceAuthState.Idle -> {
                     Text("Seo oma Go3 konto telefoniga", color = Go3Colors.TextSecondary, fontSize = 22.sp)
-                    Button(onClick = onStart) { Text("Alusta sidumist") }
+                    Button(onClick = onStart, modifier = Modifier.focusRequester(actionFocus)) { Text("Alusta sidumist") }
                 }
                 DeviceAuthState.RequestingCode -> Text("Loon sidumiskoodi…", color = Color.White, fontSize = 22.sp)
                 is DeviceAuthState.AwaitingApproval -> {
@@ -149,11 +194,11 @@ private fun PairingScreen(auth: DeviceAuthState, onStart: () -> Unit) {
                 DeviceAuthState.Approved -> Unit
                 DeviceAuthState.Expired -> {
                     Text("Sidumiskood aegus", color = Color.White, fontSize = 22.sp)
-                    Button(onClick = onStart) { Text("Loo uus kood") }
+                    Button(onClick = onStart, modifier = Modifier.focusRequester(actionFocus)) { Text("Loo uus kood") }
                 }
                 is DeviceAuthState.Failed -> {
                     Text(auth.message, color = Go3Colors.ErrorText, fontSize = 20.sp)
-                    Button(onClick = onStart) { Text("Proovi uuesti") }
+                    Button(onClick = onStart, modifier = Modifier.focusRequester(actionFocus)) { Text("Proovi uuesti") }
                 }
             }
         }
@@ -237,6 +282,9 @@ private fun PlayerScreen(
     player: Player,
     onWeatherQueryChange: (String) -> Unit,
     onWeatherSearch: () -> Unit,
+    onTransitStopQueryChange: (String) -> Unit,
+    onTransitStopSearch: () -> Unit,
+    onSearchInputKey: (Int) -> Unit,
 ) {
     Box(Modifier.fillMaxSize()) {
         AndroidView(
@@ -283,8 +331,16 @@ private fun PlayerScreen(
                 state = state,
                 onQueryChange = onWeatherQueryChange,
                 onSearch = onWeatherSearch,
+                onInputKey = onSearchInputKey,
             )
             Overlay.WEATHER -> WeatherOverlay(state)
+            Overlay.TRANSIT_STOP_SETTINGS -> TransitStopSettingsOverlay(
+                state = state,
+                onQueryChange = onTransitStopQueryChange,
+                onSearch = onTransitStopSearch,
+                onInputKey = onSearchInputKey,
+            )
+            Overlay.TRANSIT -> TransitOverlay(state)
             Overlay.SEEK -> SeekOverlay(state)
             Overlay.NONE -> Unit
         }
@@ -1019,6 +1075,7 @@ private fun AppSettingsOverlay(state: TvUiState) {
             "Kell ${if (state.showClock) "sees" else "väljas"} • info ${state.channelInfoSeconds} s • kerimine ${state.seekStepSeconds} s",
         "Ilm" to (state.weatherLocation?.let { "${it.name}${it.area?.let { area -> " • $area" }.orEmpty()}" }
             ?: "Vali ilmateate asukoht"),
+        "Bussipeatus" to "${state.transitStop.name} • ${state.transitStop.platforms.joinToString { it.code }}",
         "Värskenda kanalipaketti" to "Kontrolli Go3 tellimust ja peidetud kanaleid uuesti",
     )
     val listState = rememberLazyListState()
@@ -1122,6 +1179,7 @@ private fun WeatherLocationOverlay(
     state: TvUiState,
     onQueryChange: (String) -> Unit,
     onSearch: () -> Unit,
+    onInputKey: (Int) -> Unit,
 ) {
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -1144,6 +1202,7 @@ private fun WeatherLocationOverlay(
             modifier = Modifier
                 .fillMaxWidth()
                 .focusRequester(focusRequester)
+                .searchInputKeyHandler(onInputKey) { keyboard?.hide() }
                 .background(Go3Colors.RowIdle, RoundedCornerShape(Go3Radii.M))
                 .border(1.dp, Go3Colors.Cyan.copy(alpha = 0.65f), RoundedCornerShape(Go3Radii.M))
                 .padding(horizontal = 18.dp, vertical = 14.dp),
@@ -1182,6 +1241,98 @@ private fun WeatherLocationOverlay(
             }
         }
     }
+}
+
+@Composable
+private fun TransitStopSettingsOverlay(
+    state: TvUiState,
+    onQueryChange: (String) -> Unit,
+    onSearch: () -> Unit,
+    onInputKey: (Int) -> Unit,
+) {
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) {
+        delay(250)
+        focusRequester.requestFocus()
+        keyboard?.show()
+    }
+    CenteredMenuPanel(width = 760.dp) {
+        OverlayHeader(
+            "BUSSIPEATUSE VALIK",
+            "Otsi peatust nime järgi",
+            "Vaikimisi kasutatakse Muraste mõlemat sõidusuunda",
+            keyHints = listOf("▲▼" to "vali", "OK" to "kinnita/otsi", "BACK" to "tagasi"),
+        )
+        Spacer(Modifier.height(6.dp))
+        BasicTextField(
+            value = state.transitStopSearchQuery,
+            onValueChange = onQueryChange,
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(focusRequester)
+                .searchInputKeyHandler(onInputKey) { keyboard?.hide() }
+                .background(Go3Colors.RowIdle, RoundedCornerShape(Go3Radii.M))
+                .border(1.dp, Go3Colors.KeyGreen.copy(alpha = 0.72f), RoundedCornerShape(Go3Radii.M))
+                .padding(horizontal = 18.dp, vertical = 14.dp),
+            textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 20.sp),
+            singleLine = true,
+            cursorBrush = SolidColor(Go3Colors.KeyGreen),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = {
+                keyboard?.hide()
+                onSearch()
+            }),
+            decorationBox = { inner ->
+                Box {
+                    if (state.transitStopSearchQuery.isBlank()) {
+                        Text("Näiteks Muraste või Tabasalu", color = Go3Colors.TextFaint, fontSize = 20.sp)
+                    }
+                    inner()
+                }
+            },
+        )
+        when {
+            state.transitStopLoading -> Text("Otsin peatusi…", color = Go3Colors.TextSecondary, fontSize = 16.sp)
+            state.transitStopError != null -> Text(state.transitStopError, color = Go3Colors.ErrorText, fontSize = 15.sp)
+            state.transitStopSearchResults.isEmpty() ->
+                Text("Kirjuta peatuse nimi ja vali klaviatuuril Otsi", color = Go3Colors.TextSecondary, fontSize = 15.sp)
+        }
+        state.transitStopSearchResults.take(6).forEachIndexed { index, stop ->
+            val selected = index == state.transitStopSearchIndex
+            SettingsRow(selected, verticalPadding = 8.dp) {
+                Column(Modifier.weight(1f)) {
+                    Text(stop.name, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Peatused ${stop.platforms.joinToString { it.code.ifBlank { it.id.substringAfter(':') } }}",
+                        color = Go3Colors.TextSecondary,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (stop == state.transitStop) RowBadge("PRAEGUNE", selected)
+                else Text("›", color = if (selected) Color.White else Go3Colors.TextFaint, fontSize = 28.sp)
+            }
+        }
+    }
+}
+
+private fun Modifier.searchInputKeyHandler(
+    onInputKey: (Int) -> Unit,
+    hideKeyboard: () -> Unit,
+): Modifier = onPreviewKeyEvent { composeEvent ->
+    val event = composeEvent.nativeKeyEvent
+    val handled = event.keyCode == KeyEvent.KEYCODE_DPAD_UP ||
+        event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN ||
+        event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+        event.keyCode == KeyEvent.KEYCODE_ENTER ||
+        event.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
+    if (handled && event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+        hideKeyboard()
+        onInputKey(event.keyCode)
+    }
+    handled
 }
 
 @Composable
@@ -1319,6 +1470,241 @@ private fun WeatherDailySummary(days: List<DailyWeather>, fetchedAt: Instant, mo
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun TransitOverlay(state: TvUiState) {
+    val board = state.transitBoard
+    val selectedPlatform = state.transitStop.platforms.getOrNull(state.transitDirectionIndex)
+        ?: state.transitStop.platforms.firstOrNull()
+    val stopCode = selectedPlatform?.code.orEmpty()
+    val departures = board?.departures.orEmpty().filter { it.stopCode == stopCode }
+    val listState = rememberLazyListState()
+    LaunchedEffect(state.transitDirectionIndex, state.transitDepartureIndex, departures.size) {
+        if (departures.isNotEmpty()) {
+            val selectedIndex = state.transitDepartureIndex.coerceIn(departures.indices)
+            val layout = listState.layoutInfo
+            val visibleItems = layout.visibleItemsInfo
+            val selectedItem = visibleItems.firstOrNull { it.index == selectedIndex }
+            when {
+                selectedItem != null && selectedItem.offset < layout.viewportStartOffset ->
+                    listState.animateScrollBy((selectedItem.offset - layout.viewportStartOffset).toFloat())
+
+                selectedItem != null && selectedItem.offset + selectedItem.size > layout.viewportEndOffset ->
+                    listState.animateScrollBy(
+                        (selectedItem.offset + selectedItem.size - layout.viewportEndOffset).toFloat(),
+                    )
+
+                visibleItems.isNotEmpty() && selectedIndex < visibleItems.first().index ->
+                    listState.animateScrollToItem(selectedIndex)
+
+                visibleItems.isNotEmpty() && selectedIndex > visibleItems.last().index -> {
+                    val rowHeight = visibleItems.last().size
+                    val visibleHeight = layout.viewportEndOffset - layout.viewportStartOffset
+                    val rowTopAtBottom = (visibleHeight - rowHeight).coerceAtLeast(0)
+                    listState.animateScrollToItem(selectedIndex, scrollOffset = -rowTopAtBottom)
+                }
+            }
+        }
+    }
+    Box(Modifier.fillMaxSize().background(Go3Colors.Scrim), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier
+                .fillMaxWidth(0.82f)
+                .fillMaxHeight(0.94f)
+                .clip(RoundedCornerShape(Go3Radii.XL))
+                .background(Go3Brushes.menuCard)
+                .border(1.dp, Go3Colors.KeyGreen.copy(alpha = 0.28f), RoundedCornerShape(Go3Radii.XL))
+                .padding(horizontal = 28.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("JÄRGMISED BUSSID", color = Go3Colors.KeyGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        (board?.stopName ?: state.transitStop.name).uppercase(),
+                        color = Color.White,
+                        fontSize = 29.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    board?.takeIf { it.fetchedAt != Instant.EPOCH }?.let {
+                        Text("Uuendatud ${formatTime(it.fetchedAt)}", color = Go3Colors.TextFaint, fontSize = 11.sp)
+                    }
+                }
+            }
+
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                state.transitStop.platforms.forEachIndexed { index, platform ->
+                    val platformDepartures = board?.departures.orEmpty().filter { it.stopCode == platform.code }
+                    val labels = transitDirectionLabels(state.transitStop.name, platform.code, platformDepartures, index)
+                    TransitDirectionTab(
+                        title = labels.first,
+                        subtitle = labels.second,
+                        selected = state.transitDirectionIndex == index,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+
+            when {
+                board == null && state.transitLoading -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text("Laadin ${state.transitStop.name} väljumisi…", color = Go3Colors.TextSecondary, fontSize = 20.sp)
+                }
+                board == null && state.transitError != null -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text(state.transitError, color = Go3Colors.ErrorText, fontSize = 18.sp, textAlign = TextAlign.Center)
+                }
+                departures.isEmpty() -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text("Selles suunas rohkem väljumisi ei leitud", color = Go3Colors.TextSecondary, fontSize = 18.sp)
+                }
+                else -> LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    state = listState,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    itemsIndexed(
+                        departures,
+                        key = { _, departure -> "${departure.stopCode}-${departure.routeShortName}-${departure.departureAt}" },
+                    ) { index, departure ->
+                        TransitDepartureRow(
+                            departure = departure,
+                            selected = index == state.transitDepartureIndex,
+                        )
+                    }
+                }
+            }
+
+            state.transitError?.takeIf { board != null }?.let {
+                Text(it, color = Go3Colors.ErrorText, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Andmed: Peatus.ee / ÜTRIS", color = Go3Colors.TextFaint, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                KeyHintRow("◀▶" to "suund", "▲▼" to "väljumine", "OK" to "värskenda")
+                Spacer(Modifier.width(16.dp))
+                Box(Modifier.size(10.dp).background(Go3Colors.KeyGreen, RoundedCornerShape(5.dp)))
+                Spacer(Modifier.width(6.dp))
+                Text("või BACK sulgeb", color = Go3Colors.TextHint, fontSize = 13.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TransitDirectionTab(title: String, subtitle: String, selected: Boolean, modifier: Modifier = Modifier) {
+    Column(
+        modifier
+            .background(if (selected) Go3Colors.SelectedRow else Go3Colors.RowIdle, RoundedCornerShape(Go3Radii.M))
+            .then(
+                if (selected) Modifier.border(1.dp, Go3Colors.KeyGreen.copy(alpha = 0.8f), RoundedCornerShape(Go3Radii.M))
+                else Modifier,
+            )
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+        verticalArrangement = Arrangement.spacedBy(1.dp),
+    ) {
+        Text(title, color = if (selected) Color.White else Go3Colors.TextSecondary, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(subtitle, color = if (selected) Go3Colors.KeyGreen else Go3Colors.TextFaint, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun TransitDepartureRow(departure: TransitDeparture, selected: Boolean) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(if (selected) Go3Colors.Accent else Go3Colors.RowIdle, RoundedCornerShape(Go3Radii.M))
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Column(Modifier.width(84.dp)) {
+            Text(formatTime(departure.departureAt), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text(transitDateLabel(departure.departureAt), color = if (selected) Color.White else Go3Colors.TextFaint, fontSize = 10.sp)
+        }
+        Box(
+            Modifier.width(60.dp)
+                .background(if (selected) Color.White.copy(alpha = 0.18f) else Go3Colors.StatusChip, RoundedCornerShape(Go3Radii.S))
+                .padding(vertical = 5.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(departure.routeShortName, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        }
+        Column(Modifier.weight(1f)) {
+            Text(
+                "${departure.origin}  →  ${departure.destination}",
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                when {
+                    departure.cancelled -> "Väljumine tühistatud"
+                    departure.realtime -> "Reaalaja prognoos"
+                    else -> "Sõiduplaani aeg"
+                },
+                color = when {
+                    selected -> Color.White
+                    departure.cancelled -> Go3Colors.ErrorText
+                    departure.realtime -> Go3Colors.KeyGreen
+                    else -> Go3Colors.TextFaint
+                },
+                fontSize = 10.sp,
+            )
+        }
+        Text(
+            transitRelativeTime(departure.departureAt),
+            color = if (selected) Color.White else Go3Colors.KeyGreen,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(96.dp),
+        )
+    }
+}
+
+private fun transitDirectionLabels(
+    stopName: String,
+    stopCode: String,
+    departures: List<TransitDeparture>,
+    index: Int,
+): Pair<String, String> {
+    val destinations = departures.map(TransitDeparture::destination).distinct().take(2)
+    val origins = departures.map(TransitDeparture::origin).distinct().take(2)
+    val title = when {
+        stopName.equals("Muraste", ignoreCase = true) && stopCode == "21524-1" -> "TALLINNA POOLE"
+        stopName.equals("Muraste", ignoreCase = true) && stopCode == "21525-1" -> "LÄÄNE POOLE"
+        destinations.isNotEmpty() -> destinations.joinToString(" · ").uppercase(Locale.forLanguageTag("et-EE"))
+        else -> "SUUND ${index + 1}"
+    }
+    val subtitle = when {
+        origins.isNotEmpty() -> "Saabub: ${origins.joinToString(" · ")}"
+        destinations.isNotEmpty() -> destinations.joinToString(" · ")
+        else -> "Peatus $stopCode"
+    }
+    return title to subtitle
+}
+
+private fun transitDateLabel(instant: Instant): String {
+    val date = instant.atZone(ZoneId.systemDefault()).toLocalDate()
+    val today = java.time.LocalDate.now()
+    return when (date) {
+        today -> "TÄNA"
+        today.plusDays(1) -> "HOMME"
+        else -> date.format(DateTimeFormatter.ofPattern("EEE, d. MMM", Locale.forLanguageTag("et-EE")))
+            .uppercase(Locale.forLanguageTag("et-EE"))
+    }
+}
+
+private fun transitRelativeTime(instant: Instant): String {
+    val minutes = Duration.between(Instant.now(), instant).toMinutes().coerceAtLeast(0)
+    return when {
+        minutes <= 1 -> "KOHE"
+        minutes < 60 -> "$minutes min"
+        minutes < 24 * 60 -> "${minutes / 60} h ${minutes % 60} min"
+        else -> "${minutes / (24 * 60)} päeva"
     }
 }
 

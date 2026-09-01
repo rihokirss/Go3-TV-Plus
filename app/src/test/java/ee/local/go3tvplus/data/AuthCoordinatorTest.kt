@@ -12,6 +12,7 @@ import ee.local.go3tvplus.domain.TokenStore
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.advanceTimeBy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -38,6 +39,24 @@ class AuthCoordinatorTest {
         val coordinator = AuthCoordinator(FakeGateway(), tokenStore, backgroundScope)
         assertEquals(DeviceAuthState.Approved, coordinator.state.value)
     }
+
+    @Test fun retriesTransientTokenStoreReadFailure() = runTest {
+        val tokenStore = RetryingTokenStore(AuthTokens("saved", null, Instant.MAX))
+        val coordinator = AuthCoordinator(FakeGateway(), tokenStore, backgroundScope)
+
+        assertEquals(DeviceAuthState.Restoring, coordinator.state.value)
+        advanceTimeBy(251)
+
+        assertEquals(DeviceAuthState.Approved, coordinator.state.value)
+    }
+}
+
+private class RetryingTokenStore(private val tokens: AuthTokens) : TokenStore {
+    private var attempts = 0
+    override fun load(): AuthTokens? = if (attempts++ == 0) null else tokens
+    override fun hasStoredPayload() = true
+    override fun save(tokens: AuthTokens) = Unit
+    override fun clear() = Unit
 }
 
 private class MemoryTokenStore : TokenStore {

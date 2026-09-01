@@ -11,6 +11,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import ee.local.go3tvplus.domain.WeatherLocation
+import ee.local.go3tvplus.domain.DEFAULT_MURASTE_STOP
+import ee.local.go3tvplus.domain.TransitStopPlatform
+import ee.local.go3tvplus.domain.TransitStopSelection
 
 private val Context.tvDataStore by preferencesDataStore("tv_preferences")
 
@@ -47,6 +50,8 @@ class TvPreferences(private val context: Context) {
         val weatherLocationArea = stringPreferencesKey("weather_location_area")
         val weatherLatitude = stringPreferencesKey("weather_latitude")
         val weatherLongitude = stringPreferencesKey("weather_longitude")
+        val transitStopName = stringPreferencesKey("transit_stop_name")
+        val transitStopPlatforms = stringSetPreferencesKey("transit_stop_platforms")
         val scheduledProgramActions = stringSetPreferencesKey("scheduled_program_actions")
     }
 
@@ -90,6 +95,20 @@ class TvPreferences(private val context: Context) {
         if (location.area == null) it.remove(Keys.weatherLocationArea) else it[Keys.weatherLocationArea] = location.area
         it[Keys.weatherLatitude] = location.latitude.toString()
         it[Keys.weatherLongitude] = location.longitude.toString()
+    }
+
+    suspend fun transitStopNow(): TransitStopSelection {
+        val values = context.tvDataStore.data.first()
+        val name = values[Keys.transitStopName] ?: return DEFAULT_MURASTE_STOP
+        val platforms = values[Keys.transitStopPlatforms].orEmpty()
+            .mapNotNull(::decodeTransitPlatform)
+            .sortedBy(TransitStopPlatform::code)
+        return if (platforms.isEmpty()) DEFAULT_MURASTE_STOP else TransitStopSelection(name, platforms)
+    }
+
+    suspend fun saveTransitStop(stop: TransitStopSelection) = context.tvDataStore.edit {
+        it[Keys.transitStopName] = stop.name
+        it[Keys.transitStopPlatforms] = stop.platforms.mapTo(mutableSetOf(), ::encodeTransitPlatform)
     }
 
     suspend fun scheduledProgramActionsNow(): List<ScheduledProgramAction> =
@@ -161,6 +180,24 @@ private val DEFAULT_WEATHER_LOCATION = WeatherLocation(
     latitude = 59.46255,
     longitude = 24.39193,
 )
+
+private fun encodeTransitPlatform(platform: TransitStopPlatform): String = listOf(
+    platform.id,
+    platform.code,
+    platform.latitude,
+    platform.longitude,
+).joinToString("|")
+
+private fun decodeTransitPlatform(value: String): TransitStopPlatform? {
+    val parts = value.split('|')
+    if (parts.size != 4 || parts[0].isBlank()) return null
+    return TransitStopPlatform(
+        id = parts[0],
+        code = parts[1],
+        latitude = parts[2].toDoubleOrNull() ?: return null,
+        longitude = parts[3].toDoubleOrNull() ?: return null,
+    )
+}
 
 internal fun encodeScheduledProgramAction(action: ScheduledProgramAction): String = listOf(
     action.programId,
