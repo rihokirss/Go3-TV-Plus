@@ -1,19 +1,19 @@
 package ee.local.go3tvplus.data.local
 
 import android.content.Context
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
-import ee.local.go3tvplus.domain.WeatherLocation
 import ee.local.go3tvplus.domain.DEFAULT_MURASTE_STOP
+import ee.local.go3tvplus.domain.DEFAULT_WEATHER_LOCATION
 import ee.local.go3tvplus.domain.TransitStopPlatform
 import ee.local.go3tvplus.domain.TransitStopSelection
+import ee.local.go3tvplus.domain.WeatherLocation
 
 private val Context.tvDataStore by preferencesDataStore("tv_preferences")
 
@@ -28,6 +28,13 @@ data class PlaybackPreferences(
     val subtitleLanguage: String?,
 )
 
+data class DisplayPreferences(
+    val showClock: Boolean,
+    val channelInfoSeconds: Int,
+    val seekOverlaySeconds: Int,
+    val seekStepSeconds: Int,
+)
+
 data class ScheduledProgramAction(
     val programId: String,
     val channelId: String,
@@ -36,6 +43,7 @@ data class ScheduledProgramAction(
     val autoTune: Boolean,
 )
 
+/** Kõik lugemised on ühekordsed hetktõmmised; DataStore hoiab faili ise mälus. */
 class TvPreferences(private val context: Context) {
     private object Keys {
         val lastChannel = stringPreferencesKey("last_channel")
@@ -55,35 +63,36 @@ class TvPreferences(private val context: Context) {
         val scheduledProgramActions = stringSetPreferencesKey("scheduled_program_actions")
     }
 
-    val lastChannel: Flow<String?> = context.tvDataStore.data.map { it[Keys.lastChannel] }
-    val selectedProfile: Flow<String?> = context.tvDataStore.data.map { it[Keys.selectedProfile] }
-    val preferredAudio: Flow<String> = context.tvDataStore.data.map { it[Keys.preferredAudio] ?: "et" }
-    val preferredSubtitle: Flow<String?> = context.tvDataStore.data.map { it[Keys.preferredSubtitle] }
-    val showClock: Flow<Boolean> = context.tvDataStore.data.map { it[Keys.showClock] ?: false }
-    val channelInfoSeconds: Flow<Int> = context.tvDataStore.data.map { it[Keys.channelInfoSeconds] ?: 5 }
-    val seekOverlaySeconds: Flow<Int> = context.tvDataStore.data.map { it[Keys.seekOverlaySeconds] ?: 10 }
-    val seekStepSeconds: Flow<Int> = context.tvDataStore.data.map { it[Keys.seekStepSeconds] ?: 10 }
+    private suspend fun snapshot(): Preferences = context.tvDataStore.data.first()
 
-    suspend fun lastChannelNow(): String? = lastChannel.first()
-    suspend fun selectedProfileNow(): String? = selectedProfile.first()
+    suspend fun lastChannel(): String? = snapshot()[Keys.lastChannel]
     suspend fun saveLastChannel(id: String) = context.tvDataStore.edit { it[Keys.lastChannel] = id }
+    suspend fun selectedProfile(): String? = snapshot()[Keys.selectedProfile]
     suspend fun saveSelectedProfile(id: String) = context.tvDataStore.edit { it[Keys.selectedProfile] = id }
-    suspend fun playbackPreferencesNow() = PlaybackPreferences(preferredAudio.first(), preferredSubtitle.first())
-    suspend fun showClockNow(): Boolean = showClock.first()
-    suspend fun channelInfoSecondsNow(): Int = channelInfoSeconds.first()
-    suspend fun seekOverlaySecondsNow(): Int = seekOverlaySeconds.first()
-    suspend fun seekStepSecondsNow(): Int = seekStepSeconds.first()
+
+    suspend fun playbackPreferences(): PlaybackPreferences = snapshot().let {
+        PlaybackPreferences(it[Keys.preferredAudio] ?: "et", it[Keys.preferredSubtitle])
+    }
     suspend fun savePreferredAudio(language: String) = context.tvDataStore.edit { it[Keys.preferredAudio] = language }
     suspend fun savePreferredSubtitle(language: String?) = context.tvDataStore.edit {
         if (language == null) it.remove(Keys.preferredSubtitle) else it[Keys.preferredSubtitle] = language
+    }
+
+    suspend fun displayPreferences(): DisplayPreferences = snapshot().let {
+        DisplayPreferences(
+            showClock = it[Keys.showClock] ?: false,
+            channelInfoSeconds = it[Keys.channelInfoSeconds] ?: 5,
+            seekOverlaySeconds = it[Keys.seekOverlaySeconds] ?: 10,
+            seekStepSeconds = it[Keys.seekStepSeconds] ?: 10,
+        )
     }
     suspend fun saveShowClock(show: Boolean) = context.tvDataStore.edit { it[Keys.showClock] = show }
     suspend fun saveChannelInfoSeconds(seconds: Int) = context.tvDataStore.edit { it[Keys.channelInfoSeconds] = seconds }
     suspend fun saveSeekOverlaySeconds(seconds: Int) = context.tvDataStore.edit { it[Keys.seekOverlaySeconds] = seconds }
     suspend fun saveSeekStepSeconds(seconds: Int) = context.tvDataStore.edit { it[Keys.seekStepSeconds] = seconds }
 
-    suspend fun weatherLocationNow(): WeatherLocation? {
-        val values = context.tvDataStore.data.first()
+    suspend fun weatherLocation(): WeatherLocation {
+        val values = snapshot()
         val name = values[Keys.weatherLocationName] ?: return DEFAULT_WEATHER_LOCATION
         val latitude = values[Keys.weatherLatitude]?.toDoubleOrNull() ?: return DEFAULT_WEATHER_LOCATION
         val longitude = values[Keys.weatherLongitude]?.toDoubleOrNull() ?: return DEFAULT_WEATHER_LOCATION
@@ -97,8 +106,8 @@ class TvPreferences(private val context: Context) {
         it[Keys.weatherLongitude] = location.longitude.toString()
     }
 
-    suspend fun transitStopNow(): TransitStopSelection {
-        val values = context.tvDataStore.data.first()
+    suspend fun transitStop(): TransitStopSelection {
+        val values = snapshot()
         val name = values[Keys.transitStopName] ?: return DEFAULT_MURASTE_STOP
         val platforms = values[Keys.transitStopPlatforms].orEmpty()
             .mapNotNull(::decodeTransitPlatform)
@@ -111,17 +120,16 @@ class TvPreferences(private val context: Context) {
         it[Keys.transitStopPlatforms] = stop.platforms.mapTo(mutableSetOf(), ::encodeTransitPlatform)
     }
 
-    suspend fun scheduledProgramActionsNow(): List<ScheduledProgramAction> =
-        context.tvDataStore.data.first()[Keys.scheduledProgramActions].orEmpty()
-            .mapNotNull(::decodeScheduledProgramAction)
+    suspend fun scheduledProgramActions(): List<ScheduledProgramAction> =
+        snapshot()[Keys.scheduledProgramActions].orEmpty().mapNotNull(::decodeScheduledProgramAction)
 
     suspend fun saveScheduledProgramActions(actions: Collection<ScheduledProgramAction>) = context.tvDataStore.edit {
         it[Keys.scheduledProgramActions] = actions.mapTo(mutableSetOf(), ::encodeScheduledProgramAction)
     }
 
-    suspend fun hiddenChannelsNow(profileId: String): Set<String> {
-        val key = stringSetPreferencesKey("hidden_channels.$profileId")
-        val stored = context.tvDataStore.data.first()[key].orEmpty()
+    suspend fun hiddenChannels(profileId: String): Set<String> {
+        val key = hiddenChannelsKey(profileId)
+        val stored = snapshot()[key].orEmpty()
         val now = System.currentTimeMillis()
         val activeEntries = stored.filterTo(mutableSetOf()) { entry ->
             val hiddenAt = entry.substringAfterLast('|', missingDelimiterValue = "").toLongOrNull()
@@ -132,22 +140,15 @@ class TvPreferences(private val context: Context) {
     }
 
     suspend fun hideChannel(profileId: String, channelId: String) = context.tvDataStore.edit { preferences ->
-        val key = stringSetPreferencesKey("hidden_channels.$profileId")
+        val key = hiddenChannelsKey(profileId)
         val withoutChannel = preferences[key].orEmpty().filterNot { it.substringBeforeLast('|') == channelId }
         preferences[key] = (withoutChannel + "$channelId|${System.currentTimeMillis()}").toSet()
     }
 
-    suspend fun clearHiddenChannels(profileId: String) = context.tvDataStore.edit {
-        it.remove(stringSetPreferencesKey("hidden_channels.$profileId"))
-    }
+    suspend fun clearHiddenChannels(profileId: String) = context.tvDataStore.edit { it.remove(hiddenChannelsKey(profileId)) }
 
-    fun channelPreference(channelId: String): Flow<ChannelPreference?> = context.tvDataStore.data.map { prefs ->
-        val number = prefs[intPreferencesKey("channel.$channelId.number")] ?: return@map null
-        ChannelPreference(channelId, number, prefs[booleanPreferencesKey("channel.$channelId.favorite")] ?: false)
-    }
-
-    suspend fun channelPreferencesNow(channelIds: List<String>): Map<String, ChannelPreference> {
-        val prefs = context.tvDataStore.data.first()
+    suspend fun channelPreferences(channelIds: List<String>): Map<String, ChannelPreference> {
+        val prefs = snapshot()
         return channelIds.mapNotNull { channelId ->
             val number = prefs[intPreferencesKey("channel.$channelId.number")] ?: return@mapNotNull null
             channelId to ChannelPreference(
@@ -156,10 +157,6 @@ class TvPreferences(private val context: Context) {
                 prefs[booleanPreferencesKey("channel.$channelId.favorite")] ?: false,
             )
         }.toMap()
-    }
-
-    suspend fun saveChannelPreference(preference: ChannelPreference) {
-        saveChannelPreferences(listOf(preference))
     }
 
     suspend fun saveChannelPreferences(preferences: List<ChannelPreference>) {
@@ -172,14 +169,9 @@ class TvPreferences(private val context: Context) {
             }
         }
     }
-}
 
-private val DEFAULT_WEATHER_LOCATION = WeatherLocation(
-    name = "Suurupi",
-    area = "Harku vald, Harju maakond",
-    latitude = 59.46255,
-    longitude = 24.39193,
-)
+    private fun hiddenChannelsKey(profileId: String) = stringSetPreferencesKey("hidden_channels.$profileId")
+}
 
 private fun encodeTransitPlatform(platform: TransitStopPlatform): String = listOf(
     platform.id,

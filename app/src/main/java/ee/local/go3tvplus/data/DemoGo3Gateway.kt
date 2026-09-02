@@ -8,7 +8,6 @@ import ee.local.go3tvplus.domain.PlaybackTicket
 import ee.local.go3tvplus.domain.Profile
 import ee.local.go3tvplus.domain.Program
 import kotlinx.coroutines.delay
-import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -32,13 +31,8 @@ class DemoGo3Gateway : Go3Gateway {
     override suspend fun pollDeviceCode(deviceCode: String): AuthTokens? {
         delay(250)
         pollCount += 1
-        return if (pollCount >= 2) {
-            AuthTokens("demo-access", "demo-refresh", Instant.now().plus(12, ChronoUnit.HOURS))
-        } else null
+        return if (pollCount >= 2) AuthTokens("demo-access") else null
     }
-
-    override suspend fun refreshTokens(refreshToken: String) =
-        AuthTokens("demo-access-refreshed", "demo-refresh", Instant.now().plus(12, ChronoUnit.HOURS))
 
     override suspend fun profiles(accessToken: String) = listOf(
         Profile("main", "Minu profiil", false),

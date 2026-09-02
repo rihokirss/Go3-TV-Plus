@@ -34,14 +34,14 @@ class AuthCoordinatorTest {
 
     @Test fun existingTokenStartsApproved() = runTest {
         val tokenStore = MemoryTokenStore().apply {
-            save(AuthTokens("saved", null, Instant.MAX))
+            save(AuthTokens("saved"))
         }
         val coordinator = AuthCoordinator(FakeGateway(), tokenStore, backgroundScope)
         assertEquals(DeviceAuthState.Approved, coordinator.state.value)
     }
 
     @Test fun retriesTransientTokenStoreReadFailure() = runTest {
-        val tokenStore = RetryingTokenStore(AuthTokens("saved", null, Instant.MAX))
+        val tokenStore = RetryingTokenStore(AuthTokens("saved"))
         val coordinator = AuthCoordinator(FakeGateway(), tokenStore, backgroundScope)
 
         assertEquals(DeviceAuthState.Restoring, coordinator.state.value)
@@ -68,8 +68,7 @@ private class MemoryTokenStore : TokenStore {
 
 private class FakeGateway : Go3Gateway {
     override suspend fun requestDeviceCode() = DeviceCode("123456", "https://example.test", "https://example.test/123456", Instant.EPOCH.plusSeconds(30), 1)
-    override suspend fun pollDeviceCode(deviceCode: String) = AuthTokens("access", "refresh", Instant.MAX)
-    override suspend fun refreshTokens(refreshToken: String) = error("unused")
+    override suspend fun pollDeviceCode(deviceCode: String) = AuthTokens("access")
     override suspend fun profiles(accessToken: String): List<Profile> = error("unused")
     override suspend fun channels(accessToken: String, profileId: String): List<Channel> = error("unused")
     override suspend fun programs(accessToken: String, profileId: String, from: Instant, until: Instant): List<Program> = error("unused")

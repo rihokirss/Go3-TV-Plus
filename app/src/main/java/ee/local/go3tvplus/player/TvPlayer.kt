@@ -15,9 +15,8 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.session.MediaSession
-import ee.local.go3tvplus.domain.DrmScheme
+import ee.local.go3tvplus.BuildConfig
 import ee.local.go3tvplus.domain.PlaybackTicket
-import java.util.Locale
 
 data class SeekSnapshot(
     val positionMs: Long,
@@ -65,19 +64,18 @@ class TvPlayer(context: Context) {
         .setSeekBackIncrementMs(30_000)
         .setSeekForwardIncrementMs(30_000)
         .build().apply {
-        playWhenReady = true
-        trackSelectionParameters = trackSelectionParameters.buildUpon()
-            .setPreferredAudioLanguage("et")
-            .setPreferredTextLanguage("et")
-            .build()
-    }
+            playWhenReady = true
+            trackSelectionParameters = trackSelectionParameters.buildUpon()
+                .setPreferredAudioLanguage("et")
+                .setPreferredTextLanguage("et")
+                .build()
+        }
     private val mediaSession = MediaSession.Builder(appContext, player)
         .setId("${appContext.packageName}.main")
         .build()
+    private val httpFactory = DefaultHttpDataSource.Factory().setUserAgent("Go3 TV+/${BuildConfig.VERSION_NAME}")
     private var listener: Listener? = null
     private var baselineLiveOffsetMs: Long? = null
-    private var preferredAudioLanguage = "et"
-    private var preferredSubtitleLanguage: String? = null
     private var currentChannelName = "Go3 TV+"
     private var currentProgramTitle: String? = null
 
@@ -114,10 +112,7 @@ class TvPlayer(context: Context) {
         baselineLiveOffsetMs = null
         currentChannelName = channelName
         currentProgramTitle = programTitle
-        val httpFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("Go3 TV+/${ee.local.go3tvplus.BuildConfig.VERSION_NAME}")
-            .setDefaultRequestProperties(ticket.requestHeaders)
-        val mediaItemBuilder = MediaItem.Builder()
+        val mediaItem = MediaItem.Builder()
             .setUri(ticket.manifestUrl)
             .setMediaId(ticket.contentId)
             .setMimeType(ticket.mimeType)
@@ -128,18 +123,18 @@ class TvPlayer(context: Context) {
                     .setMaxPlaybackSpeed(1.005f)
                     .build(),
             )
-
-        if (ticket.drmScheme != null && ticket.licenseUrl != null) {
-            mediaItemBuilder.setDrmConfiguration(
-                MediaItem.DrmConfiguration.Builder(ticket.drmScheme.uuid)
-                    .setLicenseUri(ticket.licenseUrl)
-                    .setLicenseRequestHeaders(ticket.licenseRequestHeaders)
-                    .build(),
-            )
-        }
-        val mediaSource = DefaultMediaSourceFactory(httpFactory)
-            .createMediaSource(mediaItemBuilder.build())
-        player.setMediaSource(mediaSource)
+            .apply {
+                ticket.licenseUrl?.let { licenseUrl ->
+                    setDrmConfiguration(
+                        MediaItem.DrmConfiguration.Builder(C.WIDEVINE_UUID)
+                            .setLicenseUri(licenseUrl)
+                            .setLicenseRequestHeaders(ticket.licenseRequestHeaders)
+                            .build(),
+                    )
+                }
+            }
+            .build()
+        player.setMediaSource(DefaultMediaSourceFactory(httpFactory).createMediaSource(mediaItem))
         player.prepare()
         player.playWhenReady = true
     }
@@ -162,10 +157,10 @@ class TvPlayer(context: Context) {
         if (player.playWhenReady) player.pause() else player.play()
     }
 
+    /** [audioLanguage] "auto" jätab valiku mängijale; [subtitleLanguage] null lülitab subtiitrid välja. */
     fun applyTrackPreferences(audioLanguage: String, subtitleLanguage: String?) {
-        preferredAudioLanguage = audioLanguage
-        preferredSubtitleLanguage = subtitleLanguage
         val builder = player.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
             .setPreferredTextLanguage(subtitleLanguage)
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, subtitleLanguage == null)
         if (audioLanguage == "auto") builder.setPreferredAudioLanguages()
@@ -173,33 +168,13 @@ class TvPlayer(context: Context) {
         player.trackSelectionParameters = builder.build()
     }
 
-    fun audioTrackLabel(): String = languagePreferenceLabel(preferredAudioLanguage)
-
-    fun setAudioLanguagePreference(language: String) {
-        preferredAudioLanguage = language
-        val builder = player.trackSelectionParameters.buildUpon()
-            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
-        if (language == "auto") builder.setPreferredAudioLanguages()
-        else builder.setPreferredAudioLanguage(language)
-        player.trackSelectionParameters = builder.build()
-    }
-
-    fun setSubtitleLanguagePreference(language: String?) {
-        preferredSubtitleLanguage = language
-        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-            .setPreferredTextLanguage(language)
-            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, language == null)
-            .build()
-    }
-
-    fun subtitleTrackLabel(): String = preferredSubtitleLanguage?.let(::languagePreferenceLabel) ?: "Väljas"
-
     fun seekSnapshot(): SeekSnapshot {
         val duration = validTime(player.duration) ?: 0L
         val rawPosition = player.currentPosition.coerceAtLeast(0L)
         val rawLiveOffset = validTime(player.currentLiveOffset)
-        val relativeLiveOffset = if (rawLiveOffset != null && baselineLiveOffsetMs != null) {
-            (rawLiveOffset - baselineLiveOffsetMs!!).coerceAtLeast(0L)
+        val baseline = baselineLiveOffsetMs
+        val relativeLiveOffset = if (rawLiveOffset != null && baseline != null) {
+            (rawLiveOffset - baseline).coerceAtLeast(0L)
         } else rawLiveOffset
         return SeekSnapshot(
             positionMs = if (duration > 0) rawPosition.coerceAtMost(duration) else rawPosition,
@@ -238,10 +213,6 @@ class TvPlayer(context: Context) {
         return true
     }
 
-    fun pause() {
-        player.pause()
-    }
-
     /** Drop the decoder and its last frame so standby cannot restore stale video state. */
     fun stopAndClear() {
         baselineLiveOffsetMs = null
@@ -262,12 +233,6 @@ class TvPlayer(context: Context) {
     }
 }
 
-private fun languagePreferenceLabel(language: String): String {
-    if (language == "auto") return "Automaatne"
-    val name = Locale.forLanguageTag(language).getDisplayLanguage(Locale.forLanguageTag("et-EE"))
-    return name.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.forLanguageTag("et-EE")) else it.toString() }
-}
-
 private fun validTime(value: Long): Long? = value.takeIf { it != C.TIME_UNSET && it >= 0L }
 
 private const val MIN_SMOOTH_VIDEO_FRAME_RATE = 48
@@ -278,10 +243,3 @@ private fun nowPlayingMetadata(channelName: String, programTitle: String?): Medi
         .setArtist(if (programTitle == null) "Go3 TV+" else channelName)
         .setSubtitle(channelName)
         .build()
-
-private val DrmScheme.uuid
-    get() = when (this) {
-        DrmScheme.WIDEVINE -> C.WIDEVINE_UUID
-        DrmScheme.PLAYREADY -> C.PLAYREADY_UUID
-        DrmScheme.CLEARKEY -> C.CLEARKEY_UUID
-    }

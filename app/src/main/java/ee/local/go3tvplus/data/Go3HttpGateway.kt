@@ -8,7 +8,6 @@ import ee.local.go3tvplus.BuildConfig
 import ee.local.go3tvplus.domain.AuthTokens
 import ee.local.go3tvplus.domain.Channel
 import ee.local.go3tvplus.domain.DeviceCode
-import ee.local.go3tvplus.domain.DrmScheme
 import ee.local.go3tvplus.domain.Go3Failure
 import ee.local.go3tvplus.domain.Go3Gateway
 import ee.local.go3tvplus.domain.PlaybackTicket
@@ -81,6 +80,8 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
 
     @Volatile private var tier: String = "TIER_2"
     @Volatile private var channelIds: List<String> = emptyList()
+    /** Vana programmiotspunkt vastab 404, kui see on välja lülitatud; jätame selle meelde, et mitte iga värskendusega uuesti proovida. */
+    @Volatile private var legacyEndpointAvailable = true
 
     override suspend fun requestDeviceCode(): DeviceCode {
         val response = executeJson(
@@ -106,7 +107,7 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
             val subscriber = parseJson(raw).jsonObject
             subscriber.string("tier")?.takeIf(String::isNotBlank)?.let { tier = it }
             val token = subscriber.string("token") ?: return null
-            return AuthTokens(token, refreshToken = null, expiresAt = Instant.now().plusSeconds(TOKEN_LIFETIME_SECONDS))
+            return AuthTokens(token)
         }
         if (raw.looksLikeHtml) {
             throw Go3Failure.Unavailable("Go3 turvakontroll ei lubanud sidumispäringut (HTTP ${raw.code})")
@@ -116,8 +117,6 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
         if ("OTC_EXPIRED" in marker || raw.code == 410) throw Go3Failure.Authentication()
         throw failure(raw)
     }
-
-    override suspend fun refreshTokens(refreshToken: String): AuthTokens = throw Go3Failure.Authentication()
 
     override suspend fun profiles(accessToken: String): List<Profile> {
         val subscriber = executeJson(request("subscribers/detail", token = accessToken)).jsonObject
@@ -174,7 +173,6 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
     ): List<Program> {
         if (channelIds.isEmpty()) return emptyList()
         val result = LinkedHashMap<String, Program>()
-        var legacyEndpointAvailable = true
         channelIds.chunked(30).forEach { ids ->
             if (!legacyEndpointAvailable) return@forEach
             val query = buildList {
@@ -348,9 +346,7 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
             contentId = productId,
             manifestUrl = manifest.absoluteUrl(),
             mimeType = if (dashUrl != null) "application/dash+xml" else "application/x-mpegURL",
-            drmScheme = if (licenseUrl != null) DrmScheme.WIDEVINE else null,
             licenseUrl = licenseUrl?.absoluteUrl(),
-            requestHeaders = emptyMap(),
             licenseRequestHeaders = licenseHeaders(token, profileId, licenseUrl),
             playbackSessionId = session?.string("videoSessionId"),
             prolongIntervalSeconds = session?.long("prolongInterval"),
@@ -527,7 +523,6 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
         const val LANGUAGE = "ET"
         const val TENANT = "OM_EE"
         const val API_APP_VERSION = "1.36.1-(561)"
-        const val TOKEN_LIFETIME_SECONDS = 10L * 365 * 24 * 60 * 60
         const val EPG_CATALOG_PAGE_SIZE = 2_000
         const val EPG_ESTIMATED_PROGRAMS_PER_DAY = 1_600
         const val MAX_EPG_CATALOG_PAGES = 20

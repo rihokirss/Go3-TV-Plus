@@ -44,3 +44,10 @@ data class WeatherForecast(
     val days: List<DailyWeather>,
     val fetchedAt: Instant,
 )
+
+val DEFAULT_WEATHER_LOCATION = WeatherLocation(
+    name = "Suurupi",
+    area = "Harku vald, Harju maakond",
+    latitude = 59.46255,
+    longitude = 24.39193,
+)

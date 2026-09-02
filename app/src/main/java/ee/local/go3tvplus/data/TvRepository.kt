@@ -2,49 +2,41 @@ package ee.local.go3tvplus.data
 
 import androidx.room.withTransaction
 import ee.local.go3tvplus.data.local.AppDatabase
-import ee.local.go3tvplus.data.local.TvPreferences
-import ee.local.go3tvplus.data.local.ChannelPreference
-import ee.local.go3tvplus.data.local.ScheduledProgramAction
 import ee.local.go3tvplus.data.local.toDomain
 import ee.local.go3tvplus.data.local.toEntity
 import ee.local.go3tvplus.domain.Channel
-import ee.local.go3tvplus.domain.Go3Gateway
 import ee.local.go3tvplus.domain.Go3Failure
+import ee.local.go3tvplus.domain.Go3Gateway
 import ee.local.go3tvplus.domain.PlaybackTicket
 import ee.local.go3tvplus.domain.Profile
 import ee.local.go3tvplus.domain.Program
 import ee.local.go3tvplus.domain.ProgramWindow
-import ee.local.go3tvplus.domain.WeatherLocation
-import ee.local.go3tvplus.domain.TransitStopSelection
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.Duration
 import java.time.Instant
 
+/** Go3 andmete vahemälu: kanalid ja saatekava Roomis, piletid otse teenusest. */
 class TvRepository(
     private val gateway: Go3Gateway,
     private val auth: AuthCoordinator,
     private val database: AppDatabase,
-    private val preferences: TvPreferences,
-    private val weatherGateway: OpenMeteoWeatherGateway,
-    private val transitGateway: PeatusTransitGateway,
 ) {
-    val channels: Flow<List<Channel>> = database.tvDao().observeChannels().map { rows -> rows.map { it.toDomain() } }
-    val programs: Flow<List<Program>> = database.tvDao()
-        .observePrograms(Instant.now().minus(Duration.ofDays(7)).toEpochMilli(), Instant.now().plus(Duration.ofDays(2)).toEpochMilli())
+    private val dao get() = database.tvDao()
+
+    val channels: Flow<List<Channel>> = dao.observeChannels().map { rows -> rows.map { it.toDomain() } }
+    val programs: Flow<List<Program>> = dao.observePrograms()
         .map { rows -> ProgramWindow.deduplicateSchedule(rows.map { it.toDomain() }) }
         .flowOn(Dispatchers.Default)
-    val guide: Flow<Pair<List<Channel>, List<Program>>> = combine(channels, programs, ::Pair)
 
-    suspend fun profiles(): List<Profile> = gateway.profiles(auth.validTokens().accessToken)
+    suspend fun profiles(): List<Profile> = gateway.profiles(auth.accessToken())
 
     suspend fun refresh(profileId: String) {
-        val token = auth.validTokens().accessToken
+        val token = auth.accessToken()
         val freshChannels = try {
             withTransientRetry(listOf(1_000L, 3_000L, 7_000L)) {
                 withContext(Dispatchers.Default) {
@@ -55,40 +47,39 @@ class TvRepository(
             throw Go3Failure.Unavailable("Kanalite laadimine: ${error.message ?: "tundmatu viga"}", error)
         }
         database.withTransaction {
-            database.tvDao().clearChannels()
-            database.tvDao().replaceChannels(freshChannels.mapIndexed { index, channel -> channel.toEntity(index) })
+            dao.clearChannels()
+            dao.replaceChannels(freshChannels.mapIndexed { index, channel -> channel.toEntity(index) })
         }
         refreshPrograms(profileId)
     }
 
+    /**
+     * Tühja vahemälu korral laetakse 7 päeva minevikku, hiljem ainult eilsest edasi.
+     * Varasemad read jäävad vahemällu ja pügatakse alles 8 päeva vanuselt.
+     */
     suspend fun refreshPrograms(profileId: String): List<Program> {
-        val token = auth.validTokens().accessToken
+        val token = auth.accessToken()
         val now = Instant.now()
+        val from = now.minus(if (dao.countPrograms() == 0) HISTORY_ON_FIRST_LOAD else HISTORY_ON_REFRESH)
+        val until = now.plus(FUTURE_WINDOW)
         val freshPrograms = try {
             withTransientRetry(listOf(5_000L, 10_000L)) {
-                withContext(Dispatchers.Default) {
-                    gateway.programs(
-                        token,
-                        profileId,
-                        now.minus(Duration.ofDays(7)),
-                        now.plus(Duration.ofDays(2)),
-                    )
-                }
+                withContext(Dispatchers.Default) { gateway.programs(token, profileId, from, until) }
             }
         } catch (error: Exception) {
             throw Go3Failure.Unavailable("Telekava laadimine: ${error.message ?: "tundmatu viga"}", error)
         }
         database.withTransaction {
-            database.tvDao().clearPrograms()
-            database.tvDao().replacePrograms(freshPrograms.map(Program::toEntity))
-            database.tvDao().prunePrograms(now.minus(Duration.ofDays(8)).toEpochMilli())
+            dao.deleteProgramsOverlapping(from.toEpochMilli(), until.toEpochMilli())
+            dao.replacePrograms(freshPrograms.map(Program::toEntity))
+            dao.prunePrograms(now.minus(RETENTION).toEpochMilli())
         }
         return freshPrograms
     }
 
     /** Refresh only the selected schedule slot when Go3 has assigned its recording ID after broadcast start. */
     suspend fun refreshProgramSlot(profileId: String, program: Program): List<Program> {
-        val token = auth.validTokens().accessToken
+        val token = auth.accessToken()
         val freshPrograms = try {
             withTransientRetry(listOf(1_000L, 3_000L)) {
                 withContext(Dispatchers.Default) {
@@ -104,12 +95,8 @@ class TvRepository(
             throw Go3Failure.Unavailable("Saate andmete uuendamine: ${error.message ?: "tundmatu viga"}", error)
         }
         database.withTransaction {
-            database.tvDao().deleteProgramSlot(
-                program.channelId,
-                program.startsAt.toEpochMilli(),
-                program.endsAt.toEpochMilli(),
-            )
-            database.tvDao().replacePrograms(freshPrograms.map(Program::toEntity))
+            dao.deleteProgramSlot(program.channelId, program.startsAt.toEpochMilli(), program.endsAt.toEpochMilli())
+            dao.replacePrograms(freshPrograms.map(Program::toEntity))
         }
         return freshPrograms
     }
@@ -131,49 +118,22 @@ class TvRepository(
     }
 
     suspend fun liveTicket(profileId: String, channelId: String): PlaybackTicket =
-        gateway.liveTicket(auth.validTokens().accessToken, profileId, channelId)
+        gateway.liveTicket(auth.accessToken(), profileId, channelId)
 
     suspend fun catchupTicket(profileId: String, programId: String): PlaybackTicket =
-        gateway.catchupTicket(auth.validTokens().accessToken, profileId, programId)
+        gateway.catchupTicket(auth.accessToken(), profileId, programId)
 
     suspend fun closePlayback(sessionId: String?) {
         if (sessionId == null) return
-        runCatching { gateway.closePlayback(auth.validTokens().accessToken, sessionId) }
+        runCatching { gateway.closePlayback(auth.accessToken(), sessionId) }
     }
 
-    suspend fun prolongPlayback(sessionId: String) =
-        gateway.prolongPlayback(auth.validTokens().accessToken, sessionId)
+    suspend fun prolongPlayback(sessionId: String) = gateway.prolongPlayback(auth.accessToken(), sessionId)
 
-    suspend fun lastChannelId() = preferences.lastChannelNow()
-    suspend fun saveLastChannel(id: String) = preferences.saveLastChannel(id)
-    suspend fun selectedProfileId() = preferences.selectedProfileNow()
-    suspend fun saveSelectedProfile(id: String) = preferences.saveSelectedProfile(id)
-    suspend fun playbackPreferences() = preferences.playbackPreferencesNow()
-    suspend fun showClock() = preferences.showClockNow()
-    suspend fun channelInfoSeconds() = preferences.channelInfoSecondsNow()
-    suspend fun seekOverlaySeconds() = preferences.seekOverlaySecondsNow()
-    suspend fun seekStepSeconds() = preferences.seekStepSecondsNow()
-    suspend fun savePreferredAudio(language: String) = preferences.savePreferredAudio(language)
-    suspend fun savePreferredSubtitle(language: String?) = preferences.savePreferredSubtitle(language)
-    suspend fun saveShowClock(show: Boolean) = preferences.saveShowClock(show)
-    suspend fun saveChannelInfoSeconds(seconds: Int) = preferences.saveChannelInfoSeconds(seconds)
-    suspend fun saveSeekOverlaySeconds(seconds: Int) = preferences.saveSeekOverlaySeconds(seconds)
-    suspend fun saveSeekStepSeconds(seconds: Int) = preferences.saveSeekStepSeconds(seconds)
-    suspend fun weatherLocation() = preferences.weatherLocationNow()
-    suspend fun saveWeatherLocation(location: WeatherLocation) = preferences.saveWeatherLocation(location)
-    suspend fun searchWeatherLocations(query: String) = weatherGateway.searchLocations(query)
-    suspend fun weatherForecast(location: WeatherLocation) = weatherGateway.forecast(location)
-    suspend fun transitStop() = preferences.transitStopNow()
-    suspend fun saveTransitStop(stop: TransitStopSelection) = preferences.saveTransitStop(stop)
-    suspend fun searchTransitStops(query: String) = transitGateway.searchStops(query)
-    suspend fun transitDepartures(stop: TransitStopSelection) = transitGateway.departures(stop)
-    suspend fun scheduledProgramActions() = preferences.scheduledProgramActionsNow()
-    suspend fun saveScheduledProgramActions(actions: Collection<ScheduledProgramAction>) =
-        preferences.saveScheduledProgramActions(actions)
-    suspend fun hiddenChannelIds(profileId: String) = preferences.hiddenChannelsNow(profileId)
-    suspend fun hideChannel(profileId: String, channelId: String) = preferences.hideChannel(profileId, channelId)
-    suspend fun clearHiddenChannels(profileId: String) = preferences.clearHiddenChannels(profileId)
-    suspend fun channelPreferences(channels: List<Channel>) = preferences.channelPreferencesNow(channels.map(Channel::id))
-    suspend fun saveChannelPreference(preference: ChannelPreference) = preferences.saveChannelPreference(preference)
-    suspend fun saveChannelPreferences(channelPreferences: List<ChannelPreference>) = preferences.saveChannelPreferences(channelPreferences)
+    private companion object {
+        val HISTORY_ON_FIRST_LOAD: Duration = Duration.ofDays(7)
+        val HISTORY_ON_REFRESH: Duration = Duration.ofDays(1)
+        val FUTURE_WINDOW: Duration = Duration.ofDays(2)
+        val RETENTION: Duration = Duration.ofDays(8)
+    }
 }

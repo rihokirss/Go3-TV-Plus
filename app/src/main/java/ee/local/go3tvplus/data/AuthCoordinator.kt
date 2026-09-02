@@ -6,14 +6,12 @@ import ee.local.go3tvplus.domain.Go3Gateway
 import ee.local.go3tvplus.domain.TokenStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.time.Instant
 
 class AuthCoordinator(
@@ -85,21 +83,14 @@ class AuthCoordinator(
         }
     }
 
-    fun signOut() {
+    /** Unustab sidumise. [reason] näidatakse sidumisekraanil, et kasutaja teaks, miks uuesti siduda tuleb. */
+    fun signOut(reason: String? = null) {
         restoreJob?.cancel()
         authJob?.cancel()
         cachedTokens = null
         tokenStore.clear()
-        mutableState.value = DeviceAuthState.Idle
+        mutableState.value = if (reason == null) DeviceAuthState.Idle else DeviceAuthState.Failed(reason)
     }
 
-    suspend fun validTokens(): AuthTokens {
-        val current = cachedTokens ?: error("Konto ei ole seotud")
-        if (current.expiresAt.isAfter(clock().plusSeconds(60))) return current
-        val refresh = current.refreshToken ?: error("Sisselogimine aegus")
-        return gateway.refreshTokens(refresh).also { tokens ->
-            cachedTokens = tokens
-            withContext(Dispatchers.IO) { tokenStore.save(tokens) }
-        }
-    }
+    fun accessToken(): String = cachedTokens?.accessToken ?: error("Konto ei ole seotud")
 }

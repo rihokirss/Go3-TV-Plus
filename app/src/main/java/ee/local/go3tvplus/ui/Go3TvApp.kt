@@ -83,7 +83,9 @@ import ee.local.go3tvplus.domain.DeviceAuthState
 import ee.local.go3tvplus.domain.Profile
 import ee.local.go3tvplus.domain.Program
 import ee.local.go3tvplus.domain.ProgramWindow
+import ee.local.go3tvplus.domain.number
 import ee.local.go3tvplus.domain.TransitDeparture
+import ee.local.go3tvplus.domain.TransitStopSelection
 import ee.local.go3tvplus.domain.WeatherForecast
 import ee.local.go3tvplus.domain.WeatherLocation
 import ee.local.go3tvplus.R
@@ -317,31 +319,33 @@ private fun PlayerScreen(
                 title = "HELIRAJA EELISTUS",
                 description = "Kehtib kõigil kanalitel; puuduva keele korral kasutatakse kanali vaikimisi heli",
                 options = AUDIO_LANGUAGE_OPTIONS,
-                selectedIndex = state.audioSettingsIndex,
+                selectedIndex = state.menuIndex,
                 activeLanguage = state.audioLanguagePreference,
             )
             Overlay.SUBTITLE_SETTINGS -> LanguageSettingsOverlay(
                 title = "SUBTIITRITE EELISTUS",
                 description = "Kehtib kõigil kanalitel ja järelvaatamisel",
                 options = SUBTITLE_LANGUAGE_OPTIONS,
-                selectedIndex = state.subtitleSettingsIndex,
+                selectedIndex = state.menuIndex,
                 activeLanguage = state.subtitleLanguagePreference,
             )
             Overlay.DISPLAY_SETTINGS -> DisplaySettingsOverlay(state)
             Overlay.WEATHER_LOCATION -> WeatherLocationOverlay(
-                state = state,
+                search = state.weather.search,
+                currentLocation = state.weather.location,
                 onQueryChange = onWeatherQueryChange,
                 onSearch = onWeatherSearch,
                 onInputKey = onSearchInputKey,
             )
-            Overlay.WEATHER -> WeatherOverlay(state)
+            Overlay.WEATHER -> WeatherOverlay(state.weather)
             Overlay.TRANSIT_STOP_SETTINGS -> TransitStopSettingsOverlay(
-                state = state,
+                search = state.transit.search,
+                currentStop = state.transit.stop,
                 onQueryChange = onTransitStopQueryChange,
                 onSearch = onTransitStopSearch,
                 onInputKey = onSearchInputKey,
             )
-            Overlay.TRANSIT -> TransitOverlay(state)
+            Overlay.TRANSIT -> TransitOverlay(state.transit)
             Overlay.TONIGHT -> TonightOverlay(state)
             Overlay.SEEK -> SeekOverlay(state)
             Overlay.NONE -> Unit
@@ -460,33 +464,33 @@ private fun SeekOverlay(state: TvUiState) {
     // currently airing live on the channel.
     val watching = state.catchupProgram
     val channel = state.channels.firstOrNull { it.id == (watching?.channelId ?: state.currentChannelId) }
-    val playbackInstant = state.seekLiveOffsetMs
-        ?.takeIf { state.seekIsLive }
+    val playbackInstant = state.seek.liveOffsetMs
+        ?.takeIf { state.seek.isLive }
         ?.let { Instant.now().minusMillis(it) }
         ?: Instant.now()
     val program = watching ?: state.programsFor(state.currentChannelId)
         .firstOrNull { ProgramWindow.isCurrent(it, playbackInstant) }
-    val canStartOver = watching == null && state.seekIsLive && program != null && (
-        StartOverResolver.liveRewindMs(state.seekPositionMs, program.startsAt, playbackInstant) != null ||
+    val canStartOver = watching == null && state.seek.isLive && program != null && (
+        StartOverResolver.liveRewindMs(state.seek.positionMs, program.startsAt, playbackInstant) != null ||
             program.catchupAvailable
         )
-    val timelineStart = if (watching != null && !state.seekIsLive) {
+    val timelineStart = if (watching != null && !state.seek.isLive) {
         watching.startsAt
     } else {
-        playbackInstant.minusMillis(state.seekPositionMs.coerceAtLeast(0L))
+        playbackInstant.minusMillis(state.seek.positionMs.coerceAtLeast(0L))
     }
     val programBoundaries = ProgramWindow.boundaryFractions(
         state.programsFor(channel?.id),
         timelineStart,
-        state.seekDurationMs,
+        state.seek.durationMs,
     )
-    val progress = if (state.seekDurationMs > 0L) {
-        (state.seekPositionMs.toFloat() / state.seekDurationMs.toFloat()).coerceIn(0f, 1f)
+    val progress = if (state.seek.durationMs > 0L) {
+        (state.seek.positionMs.toFloat() / state.seek.durationMs.toFloat()).coerceIn(0f, 1f)
     } else 0f
     val liveLabel = when {
-        !state.seekIsLive -> formatPlaybackDuration(state.seekDurationMs)
-        (state.seekLiveOffsetMs ?: Long.MAX_VALUE) <= 5_000L -> "OTSE"
-        else -> "−${formatPlaybackDuration(state.seekLiveOffsetMs ?: 0L)} OTSEST"
+        !state.seek.isLive -> formatPlaybackDuration(state.seek.durationMs)
+        (state.seek.liveOffsetMs ?: Long.MAX_VALUE) <= 5_000L -> "OTSE"
+        else -> "−${formatPlaybackDuration(state.seek.liveOffsetMs ?: 0L)} OTSEST"
     }
 
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
@@ -500,7 +504,7 @@ private fun SeekOverlay(state: TvUiState) {
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "${channel?.serverNumber ?: ""}  ${channel?.name.orEmpty()}" +
+                    "${channel?.number ?: ""}  ${channel?.name.orEmpty()}" +
                         if (watching != null) "  •  ${formatDate(watching.startsAt)} ${formatTime(watching.startsAt)}" else "",
                     color = Go3Colors.Cyan,
                     fontSize = 16.sp,
@@ -509,8 +513,8 @@ private fun SeekOverlay(state: TvUiState) {
                 )
                 Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
                     Text(
-                        if (state.seekPlaying) "▶" else "Ⅱ",
-                        color = if (state.seekPlaying) Go3Colors.Cyan else Color.White,
+                        if (state.seek.playing) "▶" else "Ⅱ",
+                        color = if (state.seek.playing) Go3Colors.Cyan else Color.White,
                         fontSize = 20.sp,
                         lineHeight = 20.sp,
                         fontWeight = FontWeight.Bold,
@@ -569,7 +573,7 @@ private fun SeekOverlay(state: TvUiState) {
                 }
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(formatPlaybackDuration(state.seekPositionMs), color = Color.White, fontSize = 14.sp)
+                Text(formatPlaybackDuration(state.seek.positionMs), color = Color.White, fontSize = 14.sp)
                 Row(Modifier.weight(1f), horizontalArrangement = Arrangement.Center) {
                     if (canStartOver) {
                         KeyHintRow("▲" to "algusest", "◀▶" to "${state.seekStepSeconds} s", "OK" to "esita/paus", "BACK" to "sulge")
@@ -585,9 +589,7 @@ private fun SeekOverlay(state: TvUiState) {
 
 @Composable
 private fun ChannelRail(state: TvUiState) {
-    val railChannels = if (state.favoritesOnly) {
-        state.channels.filter { it.id in state.favoriteChannelIds }
-    } else state.channels
+    val railChannels = state.visibleChannels
     val selectedIndex = state.railIndex.coerceIn(0, railChannels.lastIndex.coerceAtLeast(0))
     val first = (selectedIndex - 3).coerceAtLeast(0)
     val visible = railChannels.drop(first).take(6)
@@ -632,7 +634,7 @@ private fun ChannelRail(state: TvUiState) {
                         .padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("${channel.serverNumber ?: index + 1}", color = if (selected) Color.White else Go3Colors.TextFaint, fontSize = 18.sp, modifier = Modifier.width(42.dp))
+                    Text("${channel.number}", color = if (selected) Color.White else Go3Colors.TextFaint, fontSize = 18.sp, modifier = Modifier.width(42.dp))
                     Column {
                         Text(channel.name, color = Color.White, fontSize = 21.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
                         Text(now?.title ?: "Saatekava puudub", color = if (selected) Color.White else Go3Colors.TextSecondary, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -654,9 +656,7 @@ private fun GuideOverlay(state: TvUiState) {
             delay(30_000L)
         }
     }
-    val guideChannels = if (state.favoritesOnly) {
-        state.channels.filter { it.id in state.favoriteChannelIds }
-    } else state.channels
+    val guideChannels = state.visibleChannels
     val selectedChannel = guideChannels.getOrNull(state.guideChannelIndex)
     val selectedPrograms = state.programsFor(selectedChannel?.id)
     val selectedProgram = selectedPrograms.getOrNull(state.guideProgramIndex)
@@ -896,7 +896,7 @@ private fun GuideChannelRow(
     ) {
         Row(Modifier.width(220.dp).padding(horizontal = 7.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "${channel.serverNumber ?: channelIndex + 1}",
+                "${channel.number}",
                 modifier = Modifier.width(40.dp).background(if (selectedChannel) Go3Colors.Accent else Go3Colors.ChipIdle, RoundedCornerShape(Go3Radii.XS)).padding(vertical = 4.dp),
                 color = Color.White,
                 fontSize = 14.sp,
@@ -1067,31 +1067,21 @@ private fun GuideTimelineCanvas(
 
 @Composable
 private fun AppSettingsOverlay(state: TvUiState) {
-    val profileName = state.profiles.firstOrNull { it.id == state.selectedProfileId }?.name ?: "Praegune Go3 profiil"
-    val rows = listOf(
-        "Go3 profiil" to profileName,
-        "Kanalid" to "Lemmikud, numbrid ja järjekord",
-        "Helirada" to "${state.audioTrackLabel} • kõigil kanalitel",
-        "Subtiitrid" to "${state.subtitleTrackLabel} • kõigil kanalitel",
-        "Ekraan ja juhtimine" to
-            "Kell ${if (state.showClock) "sees" else "väljas"} • info ${state.channelInfoSeconds} s • kerimine ${state.seekStepSeconds} s",
-        "Ilm" to (state.weatherLocation?.let { "${it.name}${it.area?.let { area -> " • $area" }.orEmpty()}" }
-            ?: "Vali ilmateate asukoht"),
-        "Bussipeatus" to "${state.transitStop.name} • ${state.transitStop.platforms.joinToString { it.code }}",
-        "Värskenda kanalipaketti" to "Kontrolli Go3 tellimust ja peidetud kanaleid uuesti",
-    )
+    fun subtitle(setting: AppSetting): String = when (setting) {
+        AppSetting.PROFILE -> state.profiles.firstOrNull { it.id == state.selectedProfileId }?.name ?: "Praegune Go3 profiil"
+        AppSetting.CHANNELS -> "Lemmikud, numbrid ja järjekord"
+        AppSetting.AUDIO -> "${languageLabel(AUDIO_LANGUAGE_OPTIONS, state.audioLanguagePreference)} • kõigil kanalitel"
+        AppSetting.SUBTITLES -> "${languageLabel(SUBTITLE_LANGUAGE_OPTIONS, state.subtitleLanguagePreference)} • kõigil kanalitel"
+        AppSetting.DISPLAY ->
+            "Kell ${if (state.showClock) "sees" else "väljas"} • info ${state.channelInfoSeconds} s • kerimine ${state.seekStepSeconds} s"
+        AppSetting.WEATHER -> state.weather.location.let { "${it.name}${it.area?.let { area -> " • $area" }.orEmpty()}" }
+        AppSetting.TRANSIT -> "${state.transit.stop.name} • ${state.transit.stop.platforms.joinToString { it.code }}"
+        AppSetting.REFRESH_PACKAGE -> "Kontrolli Go3 tellimust ja peidetud kanaleid uuesti"
+    }
+    val rows = AppSetting.entries
     val listState = rememberLazyListState()
     LaunchedEffect(state.appSettingsIndex) {
-        val selectedIndex = state.appSettingsIndex.coerceIn(rows.indices)
-        val layout = listState.layoutInfo
-        val item = layout.visibleItemsInfo.firstOrNull { it.index == selectedIndex }
-        when {
-            item == null -> listState.animateScrollToItem(selectedIndex)
-            item.offset < layout.viewportStartOffset ->
-                listState.animateScrollBy((item.offset - layout.viewportStartOffset).toFloat())
-            item.offset + item.size > layout.viewportEndOffset ->
-                listState.animateScrollBy((item.offset + item.size - layout.viewportEndOffset).toFloat())
-        }
+        listState.followSelection(state.appSettingsIndex.coerceIn(rows.indices))
     }
     Box(Modifier.fillMaxSize().background(Go3Colors.Scrim), contentAlignment = Alignment.CenterStart) {
         Column(
@@ -1120,12 +1110,12 @@ private fun AppSettingsOverlay(state: TvUiState) {
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(bottom = 14.dp),
             ) {
-                itemsIndexed(rows) { index, (title, value) ->
+                itemsIndexed(rows) { index, setting ->
                     val selected = index == state.appSettingsIndex
                     SettingsRow(selected, verticalPadding = 11.dp) {
                         Column(Modifier.weight(1f)) {
-                            Text(title, color = Color.White, fontSize = 20.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold)
-                            Text(value, color = if (selected) Color.White else Go3Colors.TextSecondary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(setting.title, color = Color.White, fontSize = 20.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold)
+                            Text(subtitle(setting), color = if (selected) Color.White else Go3Colors.TextSecondary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         Text("›", color = if (selected) Color.White else Go3Colors.TextFaint, fontSize = 30.sp)
                     }
@@ -1134,7 +1124,6 @@ private fun AppSettingsOverlay(state: TvUiState) {
         }
     }
 }
-
 @Composable
 private fun DisplaySettingsOverlay(state: TvUiState) {
     CenteredMenuPanel(width = 760.dp) {
@@ -1145,51 +1134,30 @@ private fun DisplaySettingsOverlay(state: TvUiState) {
             keyHints = listOf("◀▶" to "muuda", "OK" to "muuda", "BACK" to "tagasi"),
         )
         Spacer(Modifier.height(6.dp))
-        SettingsRow(selected = state.displaySettingsIndex == 0, verticalPadding = 8.dp) {
-            Column(Modifier.weight(1f)) {
-                Text("Kell täisekraanil", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Text("Näita kellaaega video paremas ülanurgas", color = Go3Colors.TextSecondary, fontSize = 13.sp)
+        DisplaySetting.entries.forEachIndexed { index, setting ->
+            SettingsRow(selected = state.menuIndex == index, verticalPadding = 8.dp) {
+                Column(Modifier.weight(1f)) {
+                    Text(setting.title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text(setting.description, color = Go3Colors.TextSecondary, fontSize = 13.sp)
+                }
+                when (setting) {
+                    DisplaySetting.CLOCK -> SettingToggle(state.showClock)
+                    DisplaySetting.CHANNEL_INFO -> SettingValue("${state.channelInfoSeconds} s")
+                    DisplaySetting.SEEK_OVERLAY -> SettingValue("${state.seekOverlaySeconds} s")
+                    DisplaySetting.SEEK_STEP -> SettingValue("${state.seekStepSeconds} s")
+                }
             }
-            SettingToggle(state.showClock)
-        }
-        SettingsRow(selected = state.displaySettingsIndex == 1, verticalPadding = 8.dp) {
-            Column(Modifier.weight(1f)) {
-                Text("Kanali- ja saateinfo", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Text("Kui kaua kanalipaneel ekraanile jääb", color = Go3Colors.TextSecondary, fontSize = 13.sp)
-            }
-            SettingValue("${state.channelInfoSeconds} s")
-        }
-        SettingsRow(selected = state.displaySettingsIndex == 2, verticalPadding = 8.dp) {
-            Column(Modifier.weight(1f)) {
-                Text("Kerimisriba kestus", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Text("Kui kaua ajaniheteave ekraanile jääb", color = Go3Colors.TextSecondary, fontSize = 13.sp)
-            }
-            SettingValue("${state.seekOverlaySeconds} s")
-        }
-        SettingsRow(selected = state.displaySettingsIndex == 3, verticalPadding = 8.dp) {
-            Column(Modifier.weight(1f)) {
-                Text("Kerimissamm", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Text("Vasaku ja parema noole hüppe pikkus", color = Go3Colors.TextSecondary, fontSize = 13.sp)
-            }
-            SettingValue("${state.seekStepSeconds} s")
         }
     }
 }
-
 @Composable
 private fun WeatherLocationOverlay(
-    state: TvUiState,
+    search: SearchState<WeatherLocation>,
+    currentLocation: WeatherLocation,
     onQueryChange: (String) -> Unit,
     onSearch: () -> Unit,
     onInputKey: (Int) -> Unit,
 ) {
-    val focusRequester = remember { FocusRequester() }
-    val keyboard = LocalSoftwareKeyboardController.current
-    LaunchedEffect(Unit) {
-        delay(250)
-        focusRequester.requestFocus()
-        keyboard?.show()
-    }
     CenteredMenuPanel(width = 760.dp) {
         OverlayHeader(
             "ILMA ASUKOHT",
@@ -1198,47 +1166,23 @@ private fun WeatherLocationOverlay(
             keyHints = listOf("▲▼" to "vali", "OK" to "kinnita/otsi", "BACK" to "tagasi"),
         )
         Spacer(Modifier.height(6.dp))
-        BasicTextField(
-            value = state.weatherSearchQuery,
-            onValueChange = onQueryChange,
-            modifier = Modifier
-                .fillMaxWidth()
-                .focusRequester(focusRequester)
-                .searchInputKeyHandler(onInputKey) { keyboard?.hide() }
-                .background(Go3Colors.RowIdle, RoundedCornerShape(Go3Radii.M))
-                .border(1.dp, Go3Colors.Cyan.copy(alpha = 0.65f), RoundedCornerShape(Go3Radii.M))
-                .padding(horizontal = 18.dp, vertical = 14.dp),
-            textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 20.sp),
-            singleLine = true,
-            cursorBrush = SolidColor(Go3Colors.Cyan),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = {
-                keyboard?.hide()
-                onSearch()
-            }),
-            decorationBox = { inner ->
-                Box {
-                    if (state.weatherSearchQuery.isBlank()) {
-                        Text("Näiteks Suurupi või Muraste", color = Go3Colors.TextFaint, fontSize = 20.sp)
-                    }
-                    inner()
-                }
-            },
+        SearchInput(
+            query = search.query,
+            placeholder = "Näiteks Suurupi või Muraste",
+            accent = Go3Colors.Cyan,
+            onQueryChange = onQueryChange,
+            onSearch = onSearch,
+            onInputKey = onInputKey,
         )
-        when {
-            state.weatherLoading -> Text("Otsin asukohta…", color = Go3Colors.TextSecondary, fontSize = 16.sp)
-            state.weatherError != null -> Text(state.weatherError, color = Go3Colors.ErrorText, fontSize = 15.sp)
-            state.weatherSearchResults.isEmpty() ->
-                Text("Kirjuta asula nimi ja vali klaviatuuril Otsi", color = Go3Colors.TextSecondary, fontSize = 15.sp)
-        }
-        state.weatherSearchResults.take(5).forEachIndexed { index, location ->
-            val selected = index == state.weatherSearchIndex
+        SearchStatus(search, searching = "Otsin asukohta…", idle = "Kirjuta asula nimi ja vali klaviatuuril Otsi")
+        search.results.take(5).forEachIndexed { index, location ->
+            val selected = index == search.index
             SettingsRow(selected, verticalPadding = 9.dp) {
                 Column(Modifier.weight(1f)) {
                     Text(location.name, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     Text(location.area ?: "Eesti", color = Go3Colors.TextSecondary, fontSize = 13.sp)
                 }
-                if (location == state.weatherLocation) RowBadge("PRAEGUNE", selected)
+                if (location == currentLocation) RowBadge("PRAEGUNE", selected)
                 else Text("›", color = if (selected) Color.White else Go3Colors.TextFaint, fontSize = 28.sp)
             }
         }
@@ -1247,18 +1191,12 @@ private fun WeatherLocationOverlay(
 
 @Composable
 private fun TransitStopSettingsOverlay(
-    state: TvUiState,
+    search: SearchState<TransitStopSelection>,
+    currentStop: TransitStopSelection,
     onQueryChange: (String) -> Unit,
     onSearch: () -> Unit,
     onInputKey: (Int) -> Unit,
 ) {
-    val focusRequester = remember { FocusRequester() }
-    val keyboard = LocalSoftwareKeyboardController.current
-    LaunchedEffect(Unit) {
-        delay(250)
-        focusRequester.requestFocus()
-        keyboard?.show()
-    }
     CenteredMenuPanel(width = 760.dp) {
         OverlayHeader(
             "BUSSIPEATUSE VALIK",
@@ -1267,41 +1205,17 @@ private fun TransitStopSettingsOverlay(
             keyHints = listOf("▲▼" to "vali", "OK" to "kinnita/otsi", "BACK" to "tagasi"),
         )
         Spacer(Modifier.height(6.dp))
-        BasicTextField(
-            value = state.transitStopSearchQuery,
-            onValueChange = onQueryChange,
-            modifier = Modifier
-                .fillMaxWidth()
-                .focusRequester(focusRequester)
-                .searchInputKeyHandler(onInputKey) { keyboard?.hide() }
-                .background(Go3Colors.RowIdle, RoundedCornerShape(Go3Radii.M))
-                .border(1.dp, Go3Colors.KeyGreen.copy(alpha = 0.72f), RoundedCornerShape(Go3Radii.M))
-                .padding(horizontal = 18.dp, vertical = 14.dp),
-            textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 20.sp),
-            singleLine = true,
-            cursorBrush = SolidColor(Go3Colors.KeyGreen),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = {
-                keyboard?.hide()
-                onSearch()
-            }),
-            decorationBox = { inner ->
-                Box {
-                    if (state.transitStopSearchQuery.isBlank()) {
-                        Text("Näiteks Muraste või Tabasalu", color = Go3Colors.TextFaint, fontSize = 20.sp)
-                    }
-                    inner()
-                }
-            },
+        SearchInput(
+            query = search.query,
+            placeholder = "Näiteks Muraste või Tabasalu",
+            accent = Go3Colors.KeyGreen,
+            onQueryChange = onQueryChange,
+            onSearch = onSearch,
+            onInputKey = onInputKey,
         )
-        when {
-            state.transitStopLoading -> Text("Otsin peatusi…", color = Go3Colors.TextSecondary, fontSize = 16.sp)
-            state.transitStopError != null -> Text(state.transitStopError, color = Go3Colors.ErrorText, fontSize = 15.sp)
-            state.transitStopSearchResults.isEmpty() ->
-                Text("Kirjuta peatuse nimi ja vali klaviatuuril Otsi", color = Go3Colors.TextSecondary, fontSize = 15.sp)
-        }
-        state.transitStopSearchResults.take(6).forEachIndexed { index, stop ->
-            val selected = index == state.transitStopSearchIndex
+        SearchStatus(search, searching = "Otsin peatusi…", idle = "Kirjuta peatuse nimi ja vali klaviatuuril Otsi")
+        search.results.take(6).forEachIndexed { index, stop ->
+            val selected = index == search.index
             SettingsRow(selected, verticalPadding = 8.dp) {
                 Column(Modifier.weight(1f)) {
                     Text(stop.name, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
@@ -1313,13 +1227,65 @@ private fun TransitStopSettingsOverlay(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                if (stop == state.transitStop) RowBadge("PRAEGUNE", selected)
+                if (stop == currentStop) RowBadge("PRAEGUNE", selected)
                 else Text("›", color = if (selected) Color.White else Go3Colors.TextFaint, fontSize = 28.sp)
             }
         }
     }
 }
 
+/** Tekstiväli puldiklaviatuuri jaoks: fookus ja klaviatuur avanevad ise, nooled ja OK lähevad view modelile. */
+@Composable
+private fun SearchInput(
+    query: String,
+    placeholder: String,
+    accent: Color,
+    onQueryChange: (String) -> Unit,
+    onSearch: () -> Unit,
+    onInputKey: (Int) -> Unit,
+) {
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) {
+        delay(250)
+        focusRequester.requestFocus()
+        keyboard?.show()
+    }
+    BasicTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        modifier = Modifier
+            .fillMaxWidth()
+            .focusRequester(focusRequester)
+            .searchInputKeyHandler(onInputKey) { keyboard?.hide() }
+            .background(Go3Colors.RowIdle, RoundedCornerShape(Go3Radii.M))
+            .border(1.dp, accent.copy(alpha = 0.7f), RoundedCornerShape(Go3Radii.M))
+            .padding(horizontal = 18.dp, vertical = 14.dp),
+        textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 20.sp),
+        singleLine = true,
+        cursorBrush = SolidColor(accent),
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(onSearch = {
+            keyboard?.hide()
+            onSearch()
+        }),
+        decorationBox = { inner ->
+            Box {
+                if (query.isBlank()) Text(placeholder, color = Go3Colors.TextFaint, fontSize = 20.sp)
+                inner()
+            }
+        },
+    )
+}
+
+@Composable
+private fun SearchStatus(search: SearchState<*>, searching: String, idle: String) {
+    when {
+        search.loading -> Text(searching, color = Go3Colors.TextSecondary, fontSize = 16.sp)
+        search.error != null -> Text(search.error, color = Go3Colors.ErrorText, fontSize = 15.sp)
+        search.results.isEmpty() -> Text(idle, color = Go3Colors.TextSecondary, fontSize = 15.sp)
+    }
+}
 private fun Modifier.searchInputKeyHandler(
     onInputKey: (Int) -> Unit,
     hideKeyboard: () -> Unit,
@@ -1338,8 +1304,8 @@ private fun Modifier.searchInputKeyHandler(
 }
 
 @Composable
-private fun WeatherOverlay(state: TvUiState) {
-    val forecast = state.weatherForecast
+private fun WeatherOverlay(weather: WeatherState) {
+    val forecast = weather.forecast
     Box(Modifier.fillMaxSize().background(Go3Colors.Scrim), contentAlignment = Alignment.Center) {
         Column(
             Modifier
@@ -1351,10 +1317,10 @@ private fun WeatherOverlay(state: TvUiState) {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             if (forecast == null) {
-                OverlayHeader("ILM", state.weatherLocation?.name ?: "Asukoht puudub")
+                OverlayHeader("ILM", weather.location.name)
                 Text(
-                    state.weatherError ?: if (state.weatherLoading) "Värskendan ilmateadet…" else "Ilmateade pole veel saadaval",
-                    color = if (state.weatherError == null) Go3Colors.TextSecondary else Go3Colors.ErrorText,
+                    weather.error ?: if (weather.loading) "Värskendan ilmateadet…" else "Ilmateade pole veel saadaval",
+                    color = if (weather.error == null) Go3Colors.TextSecondary else Go3Colors.ErrorText,
                     fontSize = 18.sp,
                 )
             } else {
@@ -1377,7 +1343,7 @@ private fun WeatherOverlay(state: TvUiState) {
                         ) {
                             Text(hour.time.format(WEATHER_HOUR_FORMAT), color = Go3Colors.TextSecondary, fontSize = 13.sp)
                             Image(
-                                painter = painterResource(weatherVectorRes(hour.weatherCode, isDay = hour.time.hour in 7..21)),
+                                painter = painterResource(weatherKind(hour.weatherCode, isDay = hour.time.hour in 7..21).vectorRes),
                                 contentDescription = weatherDescription(hour.weatherCode),
                                 modifier = Modifier.size(42.dp),
                                 colorFilter = ColorFilter.tint(Color.White),
@@ -1390,15 +1356,11 @@ private fun WeatherOverlay(state: TvUiState) {
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("Andmed: Open-Meteo", color = Go3Colors.TextFaint, fontSize = 11.sp, modifier = Modifier.weight(1f))
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Box(Modifier.size(10.dp).background(Go3Colors.KeyYellow, RoundedCornerShape(5.dp)))
-                    Text("või BACK sulgeb", color = Go3Colors.TextHint, fontSize = 13.sp)
-                }
+                ColorKeyDot(Go3Colors.KeyYellow, "või BACK sulgeb")
             }
         }
     }
 }
-
 @Composable
 private fun WeatherCurrent(forecast: WeatherForecast) {
     val current = forecast.current
@@ -1457,7 +1419,7 @@ private fun WeatherDailySummary(days: List<DailyWeather>, fetchedAt: Instant, mo
                         fontWeight = FontWeight.Bold,
                     )
                     Image(
-                        painter = painterResource(weatherVectorRes(day.weatherCode, isDay = true)),
+                        painter = painterResource(weatherKind(day.weatherCode, isDay = true).vectorRes),
                         contentDescription = weatherDescription(day.weatherCode),
                         modifier = Modifier.size(35.dp),
                         colorFilter = ColorFilter.tint(Color.White),
@@ -1476,16 +1438,16 @@ private fun WeatherDailySummary(days: List<DailyWeather>, fetchedAt: Instant, mo
 }
 
 @Composable
-private fun TransitOverlay(state: TvUiState) {
-    val board = state.transitBoard
-    val selectedPlatform = state.transitStop.platforms.getOrNull(state.transitDirectionIndex)
-        ?: state.transitStop.platforms.firstOrNull()
+private fun TransitOverlay(transit: TransitState) {
+    val board = transit.board
+    val selectedPlatform = transit.stop.platforms.getOrNull(transit.directionIndex)
+        ?: transit.stop.platforms.firstOrNull()
     val stopCode = selectedPlatform?.code.orEmpty()
     val departures = board?.departures.orEmpty().filter { it.stopCode == stopCode }
     val listState = rememberLazyListState()
-    LaunchedEffect(state.transitDirectionIndex, state.transitDepartureIndex, departures.size) {
+    LaunchedEffect(transit.directionIndex, transit.departureIndex, departures.size) {
         if (departures.isNotEmpty()) {
-            listState.followSelection(state.transitDepartureIndex.coerceIn(departures.indices))
+            listState.followSelection(transit.departureIndex.coerceIn(departures.indices))
         }
     }
     Box(Modifier.fillMaxSize().background(Go3Colors.Scrim), contentAlignment = Alignment.Center) {
@@ -1503,38 +1465,36 @@ private fun TransitOverlay(state: TvUiState) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text("JÄRGMISED BUSSID", color = Go3Colors.KeyGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     Text(
-                        (board?.stopName ?: state.transitStop.name).uppercase(),
+                        (board?.stopName ?: transit.stop.name).uppercase(),
                         color = Color.White,
                         fontSize = 29.sp,
                         fontWeight = FontWeight.Bold,
                     )
                 }
-                Column(horizontalAlignment = Alignment.End) {
-                    board?.takeIf { it.fetchedAt != Instant.EPOCH }?.let {
-                        Text("Uuendatud ${formatTime(it.fetchedAt)}", color = Go3Colors.TextFaint, fontSize = 11.sp)
-                    }
+                board?.takeIf { it.fetchedAt != Instant.EPOCH }?.let {
+                    Text("Uuendatud ${formatTime(it.fetchedAt)}", color = Go3Colors.TextFaint, fontSize = 11.sp)
                 }
             }
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                state.transitStop.platforms.forEachIndexed { index, platform ->
+                transit.stop.platforms.forEachIndexed { index, platform ->
                     val platformDepartures = board?.departures.orEmpty().filter { it.stopCode == platform.code }
-                    val labels = transitDirectionLabels(state.transitStop.name, platform.code, platformDepartures, index)
+                    val labels = transitDirectionLabels(transit.stop.name, platform.code, platformDepartures, index)
                     TransitDirectionTab(
                         title = labels.first,
                         subtitle = labels.second,
-                        selected = state.transitDirectionIndex == index,
+                        selected = transit.directionIndex == index,
                         modifier = Modifier.weight(1f),
                     )
                 }
             }
 
             when {
-                board == null && state.transitLoading -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Text("Laadin ${state.transitStop.name} väljumisi…", color = Go3Colors.TextSecondary, fontSize = 20.sp)
+                board == null && transit.loading -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text("Laadin ${transit.stop.name} väljumisi…", color = Go3Colors.TextSecondary, fontSize = 20.sp)
                 }
-                board == null && state.transitError != null -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Text(state.transitError, color = Go3Colors.ErrorText, fontSize = 18.sp, textAlign = TextAlign.Center)
+                board == null && transit.error != null -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text(transit.error, color = Go3Colors.ErrorText, fontSize = 18.sp, textAlign = TextAlign.Center)
                 }
                 departures.isEmpty() -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Text("Selles suunas rohkem väljumisi ei leitud", color = Go3Colors.TextSecondary, fontSize = 18.sp)
@@ -1550,13 +1510,13 @@ private fun TransitOverlay(state: TvUiState) {
                     ) { index, departure ->
                         TransitDepartureRow(
                             departure = departure,
-                            selected = index == state.transitDepartureIndex,
+                            selected = index == transit.departureIndex,
                         )
                     }
                 }
             }
 
-            state.transitError?.takeIf { board != null }?.let {
+            transit.error?.takeIf { board != null }?.let {
                 Text(it, color = Go3Colors.ErrorText, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -1568,7 +1528,6 @@ private fun TransitOverlay(state: TvUiState) {
         }
     }
 }
-
 @Composable
 private fun TransitDirectionTab(title: String, subtitle: String, selected: Boolean, modifier: Modifier = Modifier) {
     Column(
@@ -1654,7 +1613,7 @@ private fun transitDirectionLabels(
     val title = when {
         stopName.equals("Muraste", ignoreCase = true) && stopCode == "21524-1" -> "TALLINNA POOLE"
         stopName.equals("Muraste", ignoreCase = true) && stopCode == "21525-1" -> "VÄÄNA-JÕESUU POOLE"
-        destinations.isNotEmpty() -> destinations.joinToString(" · ").uppercase(Locale.forLanguageTag("et-EE"))
+        destinations.isNotEmpty() -> destinations.joinToString(" · ").uppercase(ESTONIAN)
         else -> "SUUND ${index + 1}"
     }
     val subtitle = when {
@@ -1671,11 +1630,9 @@ private fun transitDateLabel(instant: Instant): String {
     return when (date) {
         today -> "TÄNA"
         today.plusDays(1) -> "HOMME"
-        else -> date.format(DateTimeFormatter.ofPattern("EEE, d. MMM", Locale.forLanguageTag("et-EE")))
-            .uppercase(Locale.forLanguageTag("et-EE"))
+        else -> date.format(SHORT_DATE_FORMAT).uppercase(ESTONIAN)
     }
 }
-
 private fun relativeTimeLabel(instant: Instant): String {
     val minutes = Duration.between(Instant.now(), instant).toMinutes().coerceAtLeast(0)
     return when {
@@ -1712,12 +1669,12 @@ private suspend fun LazyListState.followSelection(selectedIndex: Int) {
 
 @Composable
 private fun TonightOverlay(state: TvUiState) {
-    val entries = state.tonightEntries
-    val now = if (state.tonightNow == Instant.EPOCH) Instant.now() else state.tonightNow
+    val entries = state.tonight.entries
+    val now = if (state.tonight.now == Instant.EPOCH) Instant.now() else state.tonight.now
     val listState = rememberLazyListState()
-    LaunchedEffect(state.tonightIndex, entries.size) {
+    LaunchedEffect(state.tonight.index, entries.size) {
         if (entries.isNotEmpty()) {
-            listState.followSelection(state.tonightIndex.coerceIn(entries.indices))
+            listState.followSelection(state.tonight.index.coerceIn(entries.indices))
         }
     }
     Box(Modifier.fillMaxSize().background(Go3Colors.Scrim), contentAlignment = Alignment.Center) {
@@ -1770,13 +1727,13 @@ private fun TonightOverlay(state: TvUiState) {
                         TonightProgramRow(
                             entry = entry,
                             now = now,
-                            selected = index == state.tonightIndex,
+                            selected = index == state.tonight.index,
                             reminderSet = entry.program.id in state.scheduledReminderIds,
                             autoTuneSet = entry.program.id in state.scheduledAutoTuneIds,
                         )
                     }
                 }
-                val description = entries.getOrNull(state.tonightIndex)?.program?.description
+                val description = entries.getOrNull(state.tonight.index)?.program?.description
                     ?.takeIf(String::isNotBlank)
                 Text(
                     description ?: "Sellel saatel kirjeldus puudub",
@@ -1819,7 +1776,7 @@ private fun TonightProgramRow(
     autoTuneSet: Boolean,
 ) {
     val program = entry.program
-    val live = !program.startsAt.isAfter(now) && program.endsAt.isAfter(now)
+    val live = ProgramWindow.isCurrent(program, now)
     Row(
         Modifier
             .fillMaxWidth()
@@ -1847,7 +1804,7 @@ private fun TonightProgramRow(
             contentAlignment = Alignment.CenterStart,
         ) {
             Text(
-                listOfNotNull(entry.channel.serverNumber?.toString(), entry.channel.name).joinToString(" "),
+                "${entry.channel.number} ${entry.channel.name}",
                 color = Color.White,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
@@ -1935,13 +1892,10 @@ private fun ColorKeyDot(color: Color, label: String) {
     }
 }
 
-private fun tonightDateLabel(now: Instant): String {
-    val estonian = Locale.forLanguageTag("et-EE")
-    return now.atZone(ZoneId.systemDefault())
-        .format(DateTimeFormatter.ofPattern("EEEE, d. MMMM", estonian))
-        .replaceFirstChar { it.titlecase(estonian) }
-}
-
+private fun tonightDateLabel(now: Instant): String =
+    now.atZone(ZoneId.systemDefault())
+        .format(DateTimeFormatter.ofPattern("EEEE, d. MMMM", ESTONIAN))
+        .replaceFirstChar { it.titlecase(ESTONIAN) }
 private fun programProgress(program: Program, now: Instant): Float {
     val total = Duration.between(program.startsAt, program.endsAt).toMillis().coerceAtLeast(1)
     val elapsed = Duration.between(program.startsAt, now).toMillis().coerceIn(0, total)
@@ -1950,7 +1904,7 @@ private fun programProgress(program: Program, now: Instant): Float {
 
 @Composable
 private fun AnimatedWeatherIcon(code: Int, isDay: Boolean, modifier: Modifier = Modifier) {
-    val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(weatherAnimationRes(code, isDay)))
+    val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(weatherKind(code, isDay).animationRes))
     val progress by animateLottieCompositionAsState(composition, iterations = LottieConstants.IterateForever)
     LottieAnimation(composition = composition, progress = { progress }, modifier = modifier)
 }
@@ -1967,26 +1921,26 @@ private fun WeatherMetric(label: String, value: String, modifier: Modifier = Mod
     }
 }
 
-private fun weatherVectorRes(code: Int, isDay: Boolean): Int = when {
-    code == 0 && isDay -> R.drawable.weather_clear_day
-    code == 0 -> R.drawable.weather_clear_night
-    code in 45..48 -> R.drawable.weather_fog
-    code in 51..67 || code in 80..82 -> R.drawable.weather_rain
-    code in 71..77 || code in 85..86 -> R.drawable.weather_snow
-    code >= 95 -> R.drawable.weather_thunderstorms
-    else -> R.drawable.weather_cloudy
+/** Open-Meteo WMO koodid rühmitatuna ikoonideks; sama rühm annab nii vektori kui animatsiooni. */
+private enum class WeatherKind(val vectorRes: Int, val animationRes: Int) {
+    CLEAR_DAY(R.drawable.weather_clear_day, R.raw.weather_clear_day),
+    CLEAR_NIGHT(R.drawable.weather_clear_night, R.raw.weather_clear_night),
+    FOG(R.drawable.weather_fog, R.raw.weather_fog),
+    RAIN(R.drawable.weather_rain, R.raw.weather_rain),
+    SNOW(R.drawable.weather_snow, R.raw.weather_snow),
+    THUNDERSTORMS(R.drawable.weather_thunderstorms, R.raw.weather_thunderstorms),
+    CLOUDY(R.drawable.weather_cloudy, R.raw.weather_cloudy),
 }
 
-private fun weatherAnimationRes(code: Int, isDay: Boolean): Int = when {
-    code == 0 && isDay -> R.raw.weather_clear_day
-    code == 0 -> R.raw.weather_clear_night
-    code in 45..48 -> R.raw.weather_fog
-    code in 51..67 || code in 80..82 -> R.raw.weather_rain
-    code in 71..77 || code in 85..86 -> R.raw.weather_snow
-    code >= 95 -> R.raw.weather_thunderstorms
-    else -> R.raw.weather_cloudy
+private fun weatherKind(code: Int, isDay: Boolean): WeatherKind = when {
+    code == 0 && isDay -> WeatherKind.CLEAR_DAY
+    code == 0 -> WeatherKind.CLEAR_NIGHT
+    code in 45..48 -> WeatherKind.FOG
+    code in 51..67 || code in 80..82 -> WeatherKind.RAIN
+    code in 71..77 || code in 85..86 -> WeatherKind.SNOW
+    code >= 95 -> WeatherKind.THUNDERSTORMS
+    else -> WeatherKind.CLOUDY
 }
-
 private fun weatherDescription(code: Int): String = when (code) {
     0 -> "Selge"
     1 -> "Peamiselt selge"
@@ -2061,7 +2015,7 @@ private fun ProfileSettingsOverlay(state: TvUiState) {
             Text("Laadin Go3 profiile…", color = Go3Colors.TextSecondary, fontSize = 18.sp)
         }
         state.profiles.forEachIndexed { index, profile ->
-            val selected = index == state.profileSettingsIndex
+            val selected = index == state.menuIndex
             val active = profile.id == state.selectedProfileId
             SettingsRow(selected, verticalPadding = 12.dp) {
                 ProfileAvatar(profile, selected, size = 48.dp)
@@ -2130,7 +2084,7 @@ private fun LanguageSettingsOverlay(
 
 @Composable
 private fun ChannelSettingsOverlay(state: TvUiState) {
-    val selectedIndex = state.settingsIndex.coerceIn(0, state.channels.lastIndex.coerceAtLeast(0))
+    val selectedIndex = state.menuIndex.coerceIn(0, state.channels.lastIndex.coerceAtLeast(0))
     val first = (selectedIndex - 3).coerceAtLeast(0)
     val visible = state.channels.drop(first).take(7)
     CenteredMenuPanel(width = 700.dp) {
@@ -2144,7 +2098,7 @@ private fun ChannelSettingsOverlay(state: TvUiState) {
             val index = first + offset
             val selected = index == selectedIndex
             SettingsRow(selected, verticalPadding = 10.dp) {
-                Text("${channel.serverNumber ?: index + 1}", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(70.dp))
+                Text("${channel.number}", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(70.dp))
                 Text(channel.name, color = Color.White, fontSize = 20.sp, modifier = Modifier.weight(1f))
                 Text(if (channel.id in state.favoriteChannelIds) "★ Lemmik" else "☆", color = if (channel.id in state.favoriteChannelIds) Go3Colors.Favorite else Go3Colors.TextSecondary, fontSize = 18.sp)
             }
@@ -2190,18 +2144,17 @@ private fun DemoBadge() {
     )
 }
 
-private fun TvUiState.programsFor(channelId: String?): List<Program> =
-    if (channelId == null) emptyList() else programsByChannel[channelId].orEmpty()
-
 private fun List<Program>.nowProgram(): Program? {
     val now = Instant.now()
     return firstOrNull { ProgramWindow.isCurrent(it, now) }
 }
 
+private val ESTONIAN: Locale = Locale.forLanguageTag("et-EE")
+private val SHORT_DATE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE, d. MMM", ESTONIAN)
 private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault())
-private val dateFormatter = DateTimeFormatter.ofPattern("EEE, d. MMM", Locale.forLanguageTag("et-EE")).withZone(ZoneId.systemDefault())
+private val dateFormatter = SHORT_DATE_FORMAT.withZone(ZoneId.systemDefault())
 private fun formatTime(instant: Instant): String = timeFormatter.format(instant)
-private fun formatDate(instant: Instant): String = dateFormatter.format(instant).uppercase(Locale.forLanguageTag("et-EE"))
+private fun formatDate(instant: Instant): String = dateFormatter.format(instant).uppercase(ESTONIAN)
 
 private fun formatPlaybackDuration(milliseconds: Long): String {
     val totalSeconds = (milliseconds.coerceAtLeast(0L) / 1_000L)

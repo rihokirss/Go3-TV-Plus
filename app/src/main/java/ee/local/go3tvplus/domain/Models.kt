@@ -26,11 +26,8 @@ data class DeviceCode(
     val pollIntervalSeconds: Long,
 )
 
-data class AuthTokens(
-    val accessToken: String,
-    val refreshToken: String?,
-    val expiresAt: Instant,
-)
+/** Go3 annab seadmesidumisel ühe pikaealise tokeni; värskendusvoogu teenusel ei ole. */
+data class AuthTokens(val accessToken: String)
 
 data class Profile(
     val id: String,
@@ -47,6 +44,9 @@ data class Channel(
     val entitled: Boolean = true,
 )
 
+/** Kanalinumber UI-s. Kanalikoguja tagab, et igal olekusse jõudnud kanalil on number olemas. */
+val Channel.number: Int get() = serverNumber ?: 0
+
 data class Program(
     val id: String,
     val channelId: String,
@@ -61,25 +61,14 @@ data class PlaybackTicket(
     val contentId: String,
     val manifestUrl: String,
     val mimeType: String,
-    val drmScheme: DrmScheme? = null,
     val licenseUrl: String? = null,
-    val requestHeaders: Map<String, String> = emptyMap(),
     val licenseRequestHeaders: Map<String, String> = emptyMap(),
     val playbackSessionId: String? = null,
     val prolongIntervalSeconds: Long? = null,
     val isLive: Boolean,
 )
 
-enum class DrmScheme { WIDEVINE, PLAYREADY, CLEARKEY }
-
-data class PlaybackSession(
-    val id: String,
-    val contentId: String,
-    val startedAt: Instant,
-)
-
 sealed class Go3Failure(message: String, cause: Throwable? = null) : Exception(message, cause) {
-    class NotConfigured : Go3Failure("Go3 API leping ei ole veel HAR-i põhjal seadistatud.")
     class Authentication : Go3Failure("Sisselogimine aegus. Seo konto uuesti.")
     class DeviceLimit : Go3Failure("Go3 seadmete piirang on täis.")
     class StreamLimit : Go3Failure("Kaks samaaegset Go3 striimi on juba kasutusel.")

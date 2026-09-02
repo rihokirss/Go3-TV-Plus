@@ -50,16 +50,16 @@ class RemoteShortcutResolverTest {
     }
 
     @Test fun displayDurationsAndSeekStepCycleIndependently() {
-        assertEquals(8, DisplaySettingOptions.cycleChannelInfoSeconds(5, 1))
-        assertEquals(8, DisplaySettingOptions.cycleChannelInfoSeconds(3, -1))
-        assertEquals(15, DisplaySettingOptions.cycleSeekOverlaySeconds(10, 1))
-        assertEquals(10, DisplaySettingOptions.cycleSeekStepSeconds(60, 1))
+        assertEquals(8, DisplaySetting.CHANNEL_INFO.cycle(5, 1))
+        assertEquals(8, DisplaySetting.CHANNEL_INFO.cycle(3, -1))
+        assertEquals(15, DisplaySetting.SEEK_OVERLAY.cycle(10, 1))
+        assertEquals(10, DisplaySetting.SEEK_STEP.cycle(60, 1))
     }
 
     @Test fun invalidDisplaySettingsUseSafeDefaults() {
-        assertEquals(5, DisplaySettingOptions.validChannelInfoSeconds(99))
-        assertEquals(10, DisplaySettingOptions.validSeekOverlaySeconds(99))
-        assertEquals(10, DisplaySettingOptions.validSeekStepSeconds(99))
+        assertEquals(5, DisplaySetting.CHANNEL_INFO.valid(99))
+        assertEquals(10, DisplaySetting.SEEK_OVERLAY.valid(99))
+        assertEquals(10, DisplaySetting.SEEK_STEP.valid(99))
     }
 
     @Test fun firstDownFromSearchFieldSelectsFirstResult() {

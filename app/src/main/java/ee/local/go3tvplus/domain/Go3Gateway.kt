@@ -5,7 +5,6 @@ import java.time.Instant
 interface Go3Gateway {
     suspend fun requestDeviceCode(): DeviceCode
     suspend fun pollDeviceCode(deviceCode: String): AuthTokens?
-    suspend fun refreshTokens(refreshToken: String): AuthTokens
     suspend fun profiles(accessToken: String): List<Profile>
     suspend fun channels(accessToken: String, profileId: String): List<Channel>
     suspend fun programs(

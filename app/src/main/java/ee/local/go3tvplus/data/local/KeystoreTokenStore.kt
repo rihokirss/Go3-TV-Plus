@@ -9,7 +9,6 @@ import ee.local.go3tvplus.domain.AuthTokens
 import ee.local.go3tvplus.domain.TokenStore
 import org.json.JSONObject
 import java.security.KeyStore
-import java.time.Instant
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -29,12 +28,8 @@ class KeystoreTokenStore(context: Context) : TokenStore {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         val key = existingSecretKey() ?: error("Secure key is temporarily unavailable")
         cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
-        val json = JSONObject(String(cipher.doFinal(ciphertext), Charsets.UTF_8))
-        AuthTokens(
-            accessToken = json.getString("accessToken"),
-            refreshToken = json.optString("refreshToken").takeIf(String::isNotBlank),
-            expiresAt = Instant.ofEpochMilli(json.getLong("expiresAt")),
-        )
+        // Older payloads also carried refreshToken/expiresAt; those keys are simply ignored.
+        AuthTokens(JSONObject(String(cipher.doFinal(ciphertext), Charsets.UTF_8)).getString("accessToken"))
     }.getOrElse { error ->
         // Never log credentials or encrypted payloads. The exception type is
         // sufficient to diagnose vendor Keystore failures after app updates.
@@ -43,12 +38,7 @@ class KeystoreTokenStore(context: Context) : TokenStore {
     }
 
     override fun save(tokens: AuthTokens) {
-        val json = JSONObject()
-            .put("accessToken", tokens.accessToken)
-            .put("refreshToken", tokens.refreshToken.orEmpty())
-            .put("expiresAt", tokens.expiresAt.toEpochMilli())
-            .toString()
-            .toByteArray(Charsets.UTF_8)
+        val json = JSONObject().put("accessToken", tokens.accessToken).toString().toByteArray(Charsets.UTF_8)
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
         val encrypted = cipher.doFinal(json)

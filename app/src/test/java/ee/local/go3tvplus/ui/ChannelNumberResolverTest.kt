@@ -2,34 +2,26 @@ package ee.local.go3tvplus.ui
 
 import ee.local.go3tvplus.domain.Channel
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChannelNumberResolverTest {
     private val channels = listOf(
         Channel("a", "Esimene", serverNumber = 4),
-        Channel("b", "Teine"),
+        Channel("b", "Teine", serverNumber = 2),
         Channel("c", "Kolmas", serverNumber = 12),
     )
 
-    @Test fun resolvesServerNumberBeforeDefaultOrdering() {
+    @Test fun resolvesChannelsByNumber() {
         assertEquals("a", ChannelNumberResolver.resolve(channels, 4)?.id)
         assertEquals("b", ChannelNumberResolver.resolve(channels, 2)?.id)
+        assertNull(ChannelNumberResolver.resolve(channels, 3))
     }
 
     @Test fun rejectsUnknownAndOutOfRangeNumbers() {
         assertNull(ChannelNumberResolver.resolve(channels, 0))
         assertNull(ChannelNumberResolver.resolve(channels, 999))
         assertNull(ChannelNumberResolver.resolve(channels, null))
-    }
-
-    @Test fun validatesUniqueAssignments() {
-        val existing = mapOf("a" to 1, "b" to 2)
-        assertTrue(ChannelNumberResolver.isValidAssignment(existing, "a", 1))
-        assertFalse(ChannelNumberResolver.isValidAssignment(existing, "c", 2))
-        assertFalse(ChannelNumberResolver.isValidAssignment(existing, "c", 1000))
     }
 
     @Test fun insertsBeforeOccupiedNumberAndShiftsFollowingChannelsUp() {
