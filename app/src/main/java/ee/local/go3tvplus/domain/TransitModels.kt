@@ -23,7 +23,11 @@ data class TransitDeparture(
     val departureAt: Instant,
     val realtime: Boolean,
     val cancelled: Boolean,
-)
+) {
+    /** Sama väljumine ka pärast värskendust, kuigi reaalaja väljumisaeg võib nihkuda. */
+    fun sameTrip(other: TransitDeparture): Boolean =
+        stopCode == other.stopCode && routeShortName == other.routeShortName && scheduledAt == other.scheduledAt
+}
 
 data class TransitBoard(
     val stopName: String,

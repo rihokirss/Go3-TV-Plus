@@ -1660,10 +1660,15 @@ private fun WeatherDailySummary(days: List<DailyWeather>, fetchedAt: Instant, mo
 @Composable
 private fun TransitOverlay(transit: TransitState) {
     val board = transit.board
-    val selectedPlatform = transit.stop.platforms.getOrNull(transit.directionIndex)
-        ?: transit.stop.platforms.firstOrNull()
-    val stopCode = selectedPlatform?.code.orEmpty()
-    val departures = board?.departures.orEmpty().filter { it.stopCode == stopCode }
+    val departures = transit.visibleDepartures
+    // Jooksev kell: sekundi kaupa, et paneel näitaks selgelt, kui palju aega väljumiseni on.
+    var now by remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = Instant.now()
+            delay(1_000L - (System.currentTimeMillis() % 1_000L))
+        }
+    }
     val listState = rememberLazyListState()
     LaunchedEffect(transit.directionIndex, transit.departureIndex, departures.size) {
         if (departures.isNotEmpty()) {
@@ -1691,8 +1696,14 @@ private fun TransitOverlay(transit: TransitState) {
                         fontWeight = FontWeight.Bold,
                     )
                 }
-                board?.takeIf { it.fetchedAt != Instant.EPOCH }?.let {
-                    Text("Uuendatud ${formatTime(it.fetchedAt)}", color = Go3Colors.TextFaint, fontSize = 11.sp)
+                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(formatClock(now), color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        board?.takeIf { it.fetchedAt != Instant.EPOCH }?.let { "väljumised uuendatud ${formatTime(it.fetchedAt)}" }
+                            ?: if (transit.loading) "laen väljumisi…" else "",
+                        color = Go3Colors.TextFaint,
+                        fontSize = 11.sp,
+                    )
                 }
             }
 
@@ -1726,10 +1737,11 @@ private fun TransitOverlay(transit: TransitState) {
                 ) {
                     itemsIndexed(
                         departures,
-                        key = { _, departure -> "${departure.stopCode}-${departure.routeShortName}-${departure.departureAt}" },
+                        key = { _, departure -> "${departure.stopCode}-${departure.routeShortName}-${departure.scheduledAt}" },
                     ) { index, departure ->
                         TransitDepartureRow(
                             departure = departure,
+                            now = now,
                             selected = index == transit.departureIndex,
                         )
                     }
@@ -1740,7 +1752,7 @@ private fun TransitOverlay(transit: TransitState) {
                 Text(it, color = Go3Colors.ErrorText, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Andmed: Peatus.ee / ÜTRIS", color = Go3Colors.TextFaint, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                Text("Andmed: Peatus.ee / ÜTRIS • uueneb iga minut", color = Go3Colors.TextFaint, fontSize = 11.sp, modifier = Modifier.weight(1f))
                 KeyHintRow("◀▶" to "suund", "▲▼" to "väljumine", "OK" to "värskenda")
                 Spacer(Modifier.width(16.dp))
                 ColorKeyDot(Go3Colors.KeyGreen, "või BACK sulgeb")
@@ -1766,7 +1778,7 @@ private fun TransitDirectionTab(title: String, subtitle: String, selected: Boole
 }
 
 @Composable
-private fun TransitDepartureRow(departure: TransitDeparture, selected: Boolean) {
+private fun TransitDepartureRow(departure: TransitDeparture, now: Instant, selected: Boolean) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -1812,7 +1824,7 @@ private fun TransitDepartureRow(departure: TransitDeparture, selected: Boolean) 
             )
         }
         Text(
-            relativeTimeLabel(departure.departureAt),
+            relativeTimeLabel(departure.departureAt, now),
             color = if (selected) Color.White else Go3Colors.KeyGreen,
             fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
@@ -1853,8 +1865,8 @@ private fun transitDateLabel(instant: Instant): String {
         else -> date.format(SHORT_DATE_FORMAT).uppercase(ESTONIAN)
     }
 }
-private fun relativeTimeLabel(instant: Instant): String {
-    val minutes = Duration.between(Instant.now(), instant).toMinutes().coerceAtLeast(0)
+private fun relativeTimeLabel(instant: Instant, now: Instant = Instant.now()): String {
+    val minutes = Duration.between(now, instant).toMinutes().coerceAtLeast(0)
     return when {
         minutes <= 1 -> "KOHE"
         minutes < 60 -> "$minutes min"
@@ -2373,6 +2385,8 @@ private fun List<Program>.nowProgram(): Program? {
 private val ESTONIAN: Locale = Locale.forLanguageTag("et-EE")
 private val SHORT_DATE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE, d. MMM", ESTONIAN)
 private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault())
+private val clockFormatter = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault())
+private fun formatClock(instant: Instant): String = clockFormatter.format(instant)
 private val dateFormatter = SHORT_DATE_FORMAT.withZone(ZoneId.systemDefault())
 private fun formatTime(instant: Instant): String = timeFormatter.format(instant)
 private fun formatDate(instant: Instant): String = dateFormatter.format(instant).uppercase(ESTONIAN)

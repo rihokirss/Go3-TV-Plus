@@ -8,6 +8,7 @@ import ee.local.go3tvplus.domain.Profile
 import ee.local.go3tvplus.domain.Program
 import ee.local.go3tvplus.domain.SeaForecast
 import ee.local.go3tvplus.domain.TransitBoard
+import ee.local.go3tvplus.domain.TransitDeparture
 import ee.local.go3tvplus.domain.TransitStopSelection
 import ee.local.go3tvplus.domain.WeatherForecast
 import ee.local.go3tvplus.domain.WeatherLocation
@@ -118,7 +119,14 @@ data class TransitState(
     val directionIndex: Int = 0,
     val departureIndex: Int = 0,
     val search: SearchState<TransitStopSelection> = SearchState(),
-)
+) {
+    /** Valitud sõidusuuna väljumised; sama nimekiri juhib nii klahve kui ekraani. */
+    val visibleDepartures: List<TransitDeparture>
+        get() {
+            val stopCode = stop.platforms.getOrNull(directionIndex)?.code ?: stop.platforms.firstOrNull()?.code ?: return emptyList()
+            return board?.departures.orEmpty().filter { it.stopCode == stopCode }
+        }
+}
 
 data class TonightState(
     val entries: List<TonightEntry> = emptyList(),

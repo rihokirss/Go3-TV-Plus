@@ -1304,6 +1304,12 @@ class TvViewModel(
                 ),
             )
         }
+        startTransitRefreshLoop()
+    }
+
+    /** Värskendab kohe ja edaspidi iga minut, kuni paneel on lahti; valik jääb samale väljumisele. */
+    private fun startTransitRefreshLoop() {
+        overlayRefreshJob?.cancel()
         overlayRefreshJob = viewModelScope.launch {
             while (snapshot.overlay == Overlay.TRANSIT) {
                 refreshTransitBoard()
@@ -1316,7 +1322,15 @@ class TvViewModel(
         updateTransit { copy(loading = true, error = null) }
         runCatching { transitGateway.departures(snapshot.transit.stop) }
             .onSuccess { board ->
-                if (snapshot.overlay == Overlay.TRANSIT) updateTransit { copy(board = board, loading = false, error = null) }
+                if (snapshot.overlay != Overlay.TRANSIT) return@onSuccess
+                updateTransit {
+                    val selected = visibleDepartures.getOrNull(departureIndex)
+                    val updated = copy(board = board, loading = false, error = null)
+                    val refreshed = updated.visibleDepartures
+                    val index = selected?.let { previous -> refreshed.indexOfFirst { it.sameTrip(previous) } }?.takeIf { it >= 0 }
+                        ?: departureIndex.coerceIn(0, refreshed.lastIndex.coerceAtLeast(0))
+                    updated.copy(departureIndex = index)
+                }
             }
             .onFailure { error ->
                 if (snapshot.overlay == Overlay.TRANSIT) {
@@ -1327,8 +1341,7 @@ class TvViewModel(
 
     private fun handleTransitKey(keyCode: Int): Boolean {
         val transit = snapshot.transit
-        val directionStopCode = transit.stop.platforms.getOrNull(transit.directionIndex)?.code.orEmpty()
-        val departureCount = transit.board?.departures?.count { it.stopCode == directionStopCode } ?: 0
+        val departureCount = transit.visibleDepartures.size
         when (keyCode) {
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> updateTransit {
                 copy(
@@ -1339,7 +1352,7 @@ class TvViewModel(
             KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> updateTransit {
                 copy(departureIndex = stepIndex(departureIndex, if (keyCode == KeyEvent.KEYCODE_DPAD_UP) -1 else 1, departureCount))
             }
-            in CONFIRM_KEYS -> openTransit()
+            in CONFIRM_KEYS -> startTransitRefreshLoop()
         }
         return true
     }
@@ -1894,7 +1907,7 @@ private const val PROGRAM_REMINDER_LEAD_MS = 60_000L
 private const val PROGRAM_ACTION_GRACE_MS = 5 * 60_000L
 private const val PROGRAM_ACTION_POLL_MS = 15_000L
 private const val NOTICE_TIMEOUT_MS = 5_000L
-private const val TRANSIT_REFRESH_INTERVAL_MS = 30_000L
+private const val TRANSIT_REFRESH_INTERVAL_MS = 60_000L
 private const val TONIGHT_REFRESH_INTERVAL_MS = 30_000L
 private const val GUIDE_REFRESH_CHECK_MS = 30 * 60_000L
 private const val WAKE_GUIDE_REFRESH_DELAY_MS = 10_000L
