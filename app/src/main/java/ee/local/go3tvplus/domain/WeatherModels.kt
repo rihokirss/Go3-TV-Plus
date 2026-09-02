@@ -1,8 +1,8 @@
 package ee.local.go3tvplus.domain
 
 import java.time.Instant
-import java.time.LocalDateTime
 import java.time.LocalDate
+import java.time.LocalDateTime
 
 data class WeatherLocation(
     val name: String,
@@ -28,6 +28,10 @@ data class HourlyWeather(
     val temperatureC: Double,
     val precipitationProbability: Int,
     val weatherCode: Int,
+    val windSpeedMs: Double = 0.0,
+    val windGustMs: Double = 0.0,
+    val windDirectionDegrees: Int = 0,
+    val visibilityKm: Double? = null,
 )
 
 data class DailyWeather(
@@ -43,7 +47,21 @@ data class WeatherForecast(
     val hours: List<HourlyWeather>,
     val days: List<DailyWeather>,
     val fetchedAt: Instant,
+    val sunrise: LocalDateTime? = null,
+    val sunset: LocalDateTime? = null,
 )
+
+/** WMO ilmakoodide rühmad; ikoonid, animatsioonid ja muutuse tuvastus töötavad rühma, mitte koodi tasemel. */
+enum class WeatherGroup { CLEAR, CLOUDY, FOG, RAIN, SNOW, THUNDER }
+
+fun weatherGroup(code: Int): WeatherGroup = when {
+    code <= 1 -> WeatherGroup.CLEAR
+    code in 45..48 -> WeatherGroup.FOG
+    code in 51..67 || code in 80..82 -> WeatherGroup.RAIN
+    code in 71..77 || code in 85..86 -> WeatherGroup.SNOW
+    code >= 95 -> WeatherGroup.THUNDER
+    else -> WeatherGroup.CLOUDY
+}
 
 val DEFAULT_WEATHER_LOCATION = WeatherLocation(
     name = "Suurupi",

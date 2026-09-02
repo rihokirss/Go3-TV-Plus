@@ -6,6 +6,7 @@ import ee.local.go3tvplus.domain.DEFAULT_WEATHER_LOCATION
 import ee.local.go3tvplus.domain.DeviceAuthState
 import ee.local.go3tvplus.domain.Profile
 import ee.local.go3tvplus.domain.Program
+import ee.local.go3tvplus.domain.SeaForecast
 import ee.local.go3tvplus.domain.TransitBoard
 import ee.local.go3tvplus.domain.TransitStopSelection
 import ee.local.go3tvplus.domain.WeatherForecast
@@ -94,12 +95,19 @@ data class SeekState(
     val playing: Boolean = true,
 )
 
+/** Ilmapaneeli kaks lehte: tavaline ilm ja kaatrisõiduks mõeldud mereilm. */
+enum class WeatherPage { WEATHER, SEA }
+
 data class WeatherState(
     val location: WeatherLocation = DEFAULT_WEATHER_LOCATION,
     val forecast: WeatherForecast? = null,
     val loading: Boolean = false,
     val error: String? = null,
     val search: SearchState<WeatherLocation> = SearchState(),
+    val page: WeatherPage = WeatherPage.WEATHER,
+    val sea: SeaForecast? = null,
+    val seaLoading: Boolean = false,
+    val seaError: String? = null,
 )
 
 data class TransitState(

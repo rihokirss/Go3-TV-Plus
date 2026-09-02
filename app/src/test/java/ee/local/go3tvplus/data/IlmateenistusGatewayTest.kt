@@ -1,0 +1,71 @@
+package ee.local.go3tvplus.data
+
+import kotlinx.coroutines.test.runTest
+import okhttp3.OkHttpClient
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Before
+import org.junit.Test
+import java.time.Instant
+
+class IlmateenistusGatewayTest {
+    private lateinit var server: MockWebServer
+
+    @Before fun setUp() {
+        server = MockWebServer()
+        server.start()
+    }
+
+    @After fun tearDown() = server.shutdown()
+
+    @Test fun parsesRequestedStationsAndSkipsEmptyFields() = runTest {
+        server.enqueue(MockResponse().setBody(XML))
+        val gateway = IlmateenistusGateway(client = OkHttpClient(), observationsUrl = server.url("/observations.php").toString())
+
+        val observations = gateway.observations(setOf("Tilgu", "Naissaare"))
+
+        assertEquals(setOf("Tilgu", "Naissaare"), observations.keys)
+        val tilgu = observations.getValue("Tilgu")
+        assertEquals(Instant.ofEpochSecond(1_788_369_320L), tilgu.observedAt)
+        assertEquals(17.2, tilgu.airTemperatureC!!, 0.01)
+        assertEquals(221, tilgu.windDirectionDegrees)
+        assertEquals(2.0, tilgu.windSpeedMs!!, 0.01)
+        assertEquals(3.5, tilgu.windGustMs!!, 0.01)
+        assertEquals(17.9, tilgu.waterTemperatureC!!, 0.01)
+        assertEquals(32, tilgu.waterLevelCm)
+        val naissaar = observations.getValue("Naissaare")
+        assertEquals(7.5, naissaar.windGustMs!!, 0.01)
+        assertNull(naissaar.airTemperatureC)
+        assertNull(naissaar.waterTemperatureC)
+    }
+
+    private companion object {
+        const val XML = """<?xml version="1.0" encoding="UTF-8"?>
+<observations timestamp="1788369320">
+  <station>
+    <name>Tallinn-Harku</name><airtemperature>16.2</airtemperature><windspeed>2</windspeed>
+  </station>
+  <station>
+    <name>Naissaare</name>
+    <wmocode>26034</wmocode>
+    <airtemperature></airtemperature>
+    <winddirection>247</winddirection>
+    <windspeed>3.3</windspeed>
+    <windspeedmax>7.5</windspeedmax>
+  </station>
+  <station>
+    <name>Tilgu</name>
+    <wmocode>97860</wmocode>
+    <airtemperature>17.2</airtemperature>
+    <winddirection>221</winddirection>
+    <windspeed>2</windspeed>
+    <windspeedmax>3.5</windspeedmax>
+    <waterlevel>32</waterlevel>
+    <watertemperature>17.9</watertemperature>
+  </station>
+</observations>"""
+    }
+}

@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -47,12 +48,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.ContentScale
@@ -79,14 +84,23 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import ee.local.go3tvplus.domain.Channel
 import ee.local.go3tvplus.domain.DailyWeather
+import ee.local.go3tvplus.domain.ForecastSlots
+import ee.local.go3tvplus.domain.HourlyWeather
 import ee.local.go3tvplus.domain.DeviceAuthState
 import ee.local.go3tvplus.domain.Profile
 import ee.local.go3tvplus.domain.Program
 import ee.local.go3tvplus.domain.ProgramWindow
+import ee.local.go3tvplus.domain.SeaCondition
+import ee.local.go3tvplus.domain.SeaConditions
+import ee.local.go3tvplus.domain.SeaForecast
+import ee.local.go3tvplus.domain.SeaHour
+import ee.local.go3tvplus.domain.StationObservation
 import ee.local.go3tvplus.domain.number
 import ee.local.go3tvplus.domain.TransitDeparture
 import ee.local.go3tvplus.domain.TransitStopSelection
 import ee.local.go3tvplus.domain.WeatherForecast
+import ee.local.go3tvplus.domain.WeatherGroup
+import ee.local.go3tvplus.domain.weatherGroup
 import ee.local.go3tvplus.domain.WeatherLocation
 import ee.local.go3tvplus.R
 import kotlinx.coroutines.delay
@@ -1305,60 +1319,266 @@ private fun Modifier.searchInputKeyHandler(
 
 @Composable
 private fun WeatherOverlay(weather: WeatherState) {
-    val forecast = weather.forecast
+    val seaPage = weather.page == WeatherPage.SEA
     Box(Modifier.fillMaxSize().background(Go3Colors.Scrim), contentAlignment = Alignment.Center) {
         Column(
             Modifier
-                .fillMaxWidth(0.84f)
+                .fillMaxWidth(0.9f)
                 .clip(RoundedCornerShape(Go3Radii.XL))
                 .background(Go3Brushes.menuCard)
                 .border(1.dp, Go3Colors.Cyan.copy(alpha = 0.24f), RoundedCornerShape(Go3Radii.XL))
-                .padding(horizontal = 34.dp, vertical = 26.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(horizontal = 32.dp, vertical = 22.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            if (forecast == null) {
-                OverlayHeader("ILM", weather.location.name)
-                Text(
-                    weather.error ?: if (weather.loading) "Värskendan ilmateadet…" else "Ilmateade pole veel saadaval",
-                    color = if (weather.error == null) Go3Colors.TextSecondary else Go3Colors.ErrorText,
-                    fontSize = 18.sp,
-                )
-            } else {
-                WeatherCurrent(forecast)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    WeatherMetric("TAJUTAV", formatTemperature(forecast.current.apparentTemperatureC), Modifier.weight(1f))
-                    WeatherMetric("TUUL", "${oneDecimal(forecast.current.windSpeedMs)} m/s ${windDirection(forecast.current.windDirectionDegrees)}", Modifier.weight(1f))
-                    WeatherMetric("PUHANGUD", "${oneDecimal(forecast.current.windGustMs)} m/s", Modifier.weight(1f))
-                    WeatherMetric("NIISKUS", "${forecast.current.humidityPercent}%", Modifier.weight(1f))
-                    WeatherMetric("SADEMED", "${oneDecimal(forecast.current.precipitationMm)} mm", Modifier.weight(1f))
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    forecast.hours.take(6).forEach { hour ->
-                        Column(
-                            Modifier.weight(1f)
-                                .background(Go3Colors.RowIdle, RoundedCornerShape(Go3Radii.M))
-                                .padding(horizontal = 8.dp, vertical = 10.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            Text(hour.time.format(WEATHER_HOUR_FORMAT), color = Go3Colors.TextSecondary, fontSize = 13.sp)
-                            Image(
-                                painter = painterResource(weatherKind(hour.weatherCode, isDay = hour.time.hour in 7..21).vectorRes),
-                                contentDescription = weatherDescription(hour.weatherCode),
-                                modifier = Modifier.size(42.dp),
-                                colorFilter = ColorFilter.tint(Color.White),
-                            )
-                            Text(formatTemperature(hour.temperatureC), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                            Text("${hour.precipitationProbability}% sade", color = Go3Colors.Cyan, fontSize = 11.sp)
-                        }
-                    }
-                }
-            }
+            if (seaPage) SeaPageContent(weather) else WeatherPageContent(weather)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Andmed: Open-Meteo", color = Go3Colors.TextFaint, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                Text(
+                    if (seaPage) "Andmed: Ilmateenistus (jaamad), Open-Meteo Marine (lained)" else "Andmed: Open-Meteo",
+                    color = Go3Colors.TextFaint,
+                    fontSize = 11.sp,
+                    modifier = Modifier.weight(1f),
+                )
+                KeyHintRow("◀▶" to (if (seaPage) "ilm" else "mereilm"), "OK" to "värskenda")
+                Spacer(Modifier.width(16.dp))
                 ColorKeyDot(Go3Colors.KeyYellow, "või BACK sulgeb")
             }
         }
+    }
+}
+
+@Composable
+private fun ColumnScope.WeatherPageContent(weather: WeatherState) {
+    val forecast = weather.forecast
+    if (forecast == null) {
+        OverlayHeader("ILM", weather.location.name)
+        Text(
+            weather.error ?: if (weather.loading) "Värskendan ilmateadet…" else "Ilmateade pole veel saadaval",
+            color = if (weather.error == null) Go3Colors.TextSecondary else Go3Colors.ErrorText,
+            fontSize = 18.sp,
+        )
+        return
+    }
+    WeatherCurrent(forecast)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        WeatherMetric("TAJUTAV", formatTemperature(forecast.current.apparentTemperatureC), Modifier.weight(1f))
+        WeatherMetric(
+            "TUUL",
+            "${oneDecimal(forecast.current.windSpeedMs)} m/s ${windDirection(forecast.current.windDirectionDegrees)}",
+            Modifier.weight(1f),
+            windFromDegrees = forecast.current.windDirectionDegrees,
+        )
+        WeatherMetric("PUHANGUD", "${oneDecimal(forecast.current.windGustMs)} m/s", Modifier.weight(1f))
+        WeatherMetric("NIISKUS", "${forecast.current.humidityPercent}%", Modifier.weight(1f))
+        WeatherMetric("SADEMED", "${oneDecimal(forecast.current.precipitationMm)} mm", Modifier.weight(1f))
+    }
+    // Iga kahe tunni tagant, aga ilmamuutuse ajal tihedamalt.
+    val slots = remember(forecast) {
+        ForecastSlots.select(forecast.hours, maxCount = 6, baseStepHours = 2, timeOf = HourlyWeather::time, notableChange = ForecastSlots::notableWeatherChange)
+    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        slots.forEach { hour ->
+            Column(
+                Modifier.weight(1f)
+                    .background(Go3Colors.RowIdle, RoundedCornerShape(Go3Radii.M))
+                    .padding(horizontal = 8.dp, vertical = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(hour.time.format(WEATHER_HOUR_FORMAT), color = Go3Colors.TextSecondary, fontSize = 13.sp)
+                Image(
+                    painter = painterResource(weatherKind(hour.weatherCode, isDay = hour.time.hour in 7..21).vectorRes),
+                    contentDescription = weatherDescription(hour.weatherCode),
+                    modifier = Modifier.size(42.dp),
+                    colorFilter = ColorFilter.tint(Color.White),
+                )
+                Text(formatTemperature(hour.temperatureC), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    WindArrow(hour.windDirectionDegrees, Modifier.size(13.dp), Go3Colors.TextSecondary)
+                    Text("${hour.windSpeedMs.roundToInt()} m/s", color = Go3Colors.TextSecondary, fontSize = 12.sp)
+                }
+                Text("${hour.precipitationProbability}% sade", color = Go3Colors.Cyan, fontSize = 11.sp)
+            }
+        }
+    }
+}
+
+/** Kaatrisõiduks: sadama ja sihtkoha ilmajaamad, avamere prognoos ning sõiduhinnang. */
+@Composable
+private fun ColumnScope.SeaPageContent(weather: WeatherState) {
+    val sea = weather.sea
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("MEREILM KAATRILE", color = Go3Colors.Cyan, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text(sea?.route?.title ?: "Mereprognoos", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+        }
+        sea?.let { Text("Uuendatud ${formatTime(it.fetchedAt)}", color = Go3Colors.TextFaint, fontSize = 11.sp) }
+    }
+    if (sea == null) {
+        Text(
+            weather.seaError ?: if (weather.seaLoading) "Laen mereprognoosi…" else "Mereprognoos pole veel saadaval",
+            color = if (weather.seaError == null) Go3Colors.TextSecondary else Go3Colors.ErrorText,
+            fontSize = 18.sp,
+        )
+        return
+    }
+    val now = sea.hours.firstOrNull()
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        StationCard(sea.route.harbour.name, sea.harbourObservation, Modifier.weight(1f))
+        StationCard(sea.route.destination.name, sea.destinationObservation, Modifier.weight(1f))
+        SeaNowCard(sea, now, Modifier.weight(1.25f))
+    }
+    val slots = remember(sea) {
+        ForecastSlots.select(sea.hours, maxCount = 8, baseStepHours = 2, timeOf = SeaHour::time, notableChange = ForecastSlots::notableSeaChange)
+    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        slots.forEach { hour -> SeaHourCard(hour, Modifier.weight(1f)) }
+    }
+    val rating = now?.let(SeaConditions::rate)
+    val ratingColor = conditionColor(rating)
+    Row(
+        Modifier.fillMaxWidth()
+            .background(ratingColor.copy(alpha = 0.14f), RoundedCornerShape(Go3Radii.M))
+            .border(1.dp, ratingColor.copy(alpha = 0.5f), RoundedCornerShape(Go3Radii.M))
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.size(12.dp).background(ratingColor, RoundedCornerShape(6.dp)))
+        Text(rating?.label ?: "–", color = ratingColor, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Text(SeaConditions.summary(sea.hours), color = Color.White, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+    }
+    weather.seaError?.let { Text(it, color = Go3Colors.ErrorText, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+}
+
+@Composable
+private fun StationCard(name: String, observation: StationObservation?, modifier: Modifier = Modifier) {
+    Column(
+        modifier.background(Go3Colors.RowIdle.copy(alpha = 0.78f), RoundedCornerShape(Go3Radii.M)).padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(name.uppercase(ESTONIAN), color = Go3Colors.TextFaint, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            observation?.let { Text("ilmajaam ${formatTime(it.observedAt)}", color = Go3Colors.TextFaint, fontSize = 10.sp) }
+        }
+        if (observation == null) {
+            Text("Ilmajaama andmed puuduvad", color = Go3Colors.TextSecondary, fontSize = 14.sp)
+            return
+        }
+        WindReading(observation.windSpeedMs, observation.windGustMs, observation.windDirectionDegrees)
+        val details = listOfNotNull(
+            observation.airTemperatureC?.let { "õhk ${formatTemperature(it)}" },
+            observation.waterTemperatureC?.let { "vesi ${formatTemperature(it)}" },
+            observation.waterLevelCm?.let { "veetase ${if (it > 0) "+$it" else "$it"} cm" },
+            observation.visibilityKm?.let { "nähtavus ${visibilityLabel(it)}" },
+        )
+        Text(details.joinToString(" · ").ifBlank { " " }, color = Go3Colors.TextSecondary, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun SeaNowCard(sea: SeaForecast, now: SeaHour?, modifier: Modifier = Modifier) {
+    Column(
+        modifier.background(Go3Colors.RowIdle.copy(alpha = 0.78f), RoundedCornerShape(Go3Radii.M)).padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("AVAMERI PRAEGU • PROGNOOS", color = Go3Colors.TextFaint, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        if (now == null) {
+            Text("Prognoos puudub", color = Go3Colors.TextSecondary, fontSize = 14.sp)
+            return
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+            WindReading(now.windSpeedMs, now.windGustMs, now.windDirectionDegrees)
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("laine", color = Go3Colors.TextSecondary, fontSize = 12.sp)
+                    Text(now.waveHeightM?.let { "${oneDecimal(it)} m" } ?: "–", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    now.waveDirectionDegrees?.let { WindArrow(it, Modifier.size(16.dp), Go3Colors.Cyan) }
+                }
+                Text(
+                    listOfNotNull(
+                        now.wavePeriodS?.let { "periood ${oneDecimal(it)} s" },
+                        sea.seaSurfaceTemperatureC?.let { "vesi ${formatTemperature(it)}" },
+                    ).joinToString(" · "),
+                    color = Go3Colors.TextSecondary,
+                    fontSize = 12.sp,
+                )
+            }
+        }
+        Text(
+            listOfNotNull(
+                now.visibilityKm?.let { "nähtavus ${visibilityLabel(it)}" },
+                sea.sunrise?.let { rise -> "päike ${rise.format(WEATHER_HOUR_FORMAT)}–${sea.sunset?.format(WEATHER_HOUR_FORMAT) ?: "?"}" },
+                "õhk ${formatTemperature(now.temperatureC)}",
+            ).joinToString(" · "),
+            color = Go3Colors.TextSecondary,
+            fontSize = 12.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** Nool näitab, kuhu tuul puhub; kompassitäht ütleb, kust. */
+@Composable
+private fun WindReading(speedMs: Double?, gustMs: Double?, fromDegrees: Int?) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (fromDegrees != null) WindArrow(fromDegrees, Modifier.size(34.dp), Go3Colors.Cyan)
+        Column {
+            Text(speedMs?.let { "${oneDecimal(it)} m/s" } ?: "–", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            Text(
+                listOfNotNull(gustMs?.let { "puhang ${oneDecimal(it)}" }, fromDegrees?.let(::windDirection)).joinToString(" · "),
+                color = Go3Colors.TextSecondary,
+                fontSize = 12.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SeaHourCard(hour: SeaHour, modifier: Modifier = Modifier) {
+    val color = conditionColor(SeaConditions.rate(hour))
+    Column(
+        modifier.background(Go3Colors.RowIdle, RoundedCornerShape(Go3Radii.M)).padding(horizontal = 6.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Text(hour.time.format(WEATHER_HOUR_FORMAT), color = Go3Colors.TextSecondary, fontSize = 12.sp)
+        WindArrow(hour.windDirectionDegrees, Modifier.size(22.dp), Color.White)
+        Text("${hour.windSpeedMs.roundToInt()} (${hour.windGustMs.roundToInt()}) m/s", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(hour.waveHeightM?.let { "${oneDecimal(it)} m" } ?: "– m", color = Go3Colors.Cyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Image(
+            painter = painterResource(weatherKind(hour.weatherCode, isDay = hour.time.hour in 7..21).vectorRes),
+            contentDescription = weatherDescription(hour.weatherCode),
+            modifier = Modifier.size(24.dp),
+            colorFilter = ColorFilter.tint(Go3Colors.TextSecondary),
+        )
+        Box(Modifier.fillMaxWidth().height(4.dp).background(color, RoundedCornerShape(2.dp)))
+    }
+}
+
+private fun conditionColor(condition: SeaCondition?): Color = when (condition) {
+    SeaCondition.CALM -> Go3Colors.KeyGreen
+    SeaCondition.MODERATE -> Go3Colors.KeyYellow
+    SeaCondition.ROUGH -> Go3Colors.KeyRed
+    null -> Go3Colors.TextFaint
+}
+
+private fun visibilityLabel(km: Double): String = if (km >= 10) "${km.roundToInt()} km" else "${oneDecimal(km)} km"
+
+/** Nool joonistatakse põhja suunas ja pööratakse sinna, kuhu tuul puhub (meteoroloogiline suund + 180°). */
+@Composable
+private fun WindArrow(fromDegrees: Int, modifier: Modifier = Modifier, color: Color = Color.White) {
+    Canvas(modifier.rotate(((fromDegrees + 180) % 360).toFloat())) {
+        val w = size.width
+        val h = size.height
+        drawLine(color, Offset(w / 2, h * 0.94f), Offset(w / 2, h * 0.3f), strokeWidth = h * 0.13f, cap = StrokeCap.Round)
+        val head = Path().apply {
+            moveTo(w / 2, 0f)
+            lineTo(w * 0.16f, h * 0.44f)
+            lineTo(w * 0.84f, h * 0.44f)
+            close()
+        }
+        drawPath(head, color)
     }
 }
 @Composable
@@ -1910,17 +2130,19 @@ private fun AnimatedWeatherIcon(code: Int, isDay: Boolean, modifier: Modifier = 
 }
 
 @Composable
-private fun WeatherMetric(label: String, value: String, modifier: Modifier = Modifier) {
+private fun WeatherMetric(label: String, value: String, modifier: Modifier = Modifier, windFromDegrees: Int? = null) {
     Column(
         modifier.background(Go3Colors.RowIdle.copy(alpha = 0.78f), RoundedCornerShape(Go3Radii.M))
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Text(label, color = Go3Colors.TextFaint, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-        Text(value, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (windFromDegrees != null) WindArrow(windFromDegrees, Modifier.size(18.dp), Go3Colors.Cyan)
+            Text(value, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        }
     }
 }
-
 /** Open-Meteo WMO koodid rühmitatuna ikoonideks; sama rühm annab nii vektori kui animatsiooni. */
 private enum class WeatherKind(val vectorRes: Int, val animationRes: Int) {
     CLEAR_DAY(R.drawable.weather_clear_day, R.raw.weather_clear_day),
@@ -1932,14 +2154,13 @@ private enum class WeatherKind(val vectorRes: Int, val animationRes: Int) {
     CLOUDY(R.drawable.weather_cloudy, R.raw.weather_cloudy),
 }
 
-private fun weatherKind(code: Int, isDay: Boolean): WeatherKind = when {
-    code == 0 && isDay -> WeatherKind.CLEAR_DAY
-    code == 0 -> WeatherKind.CLEAR_NIGHT
-    code in 45..48 -> WeatherKind.FOG
-    code in 51..67 || code in 80..82 -> WeatherKind.RAIN
-    code in 71..77 || code in 85..86 -> WeatherKind.SNOW
-    code >= 95 -> WeatherKind.THUNDERSTORMS
-    else -> WeatherKind.CLOUDY
+private fun weatherKind(code: Int, isDay: Boolean): WeatherKind = when (weatherGroup(code)) {
+    WeatherGroup.CLEAR -> if (isDay) WeatherKind.CLEAR_DAY else WeatherKind.CLEAR_NIGHT
+    WeatherGroup.FOG -> WeatherKind.FOG
+    WeatherGroup.RAIN -> WeatherKind.RAIN
+    WeatherGroup.SNOW -> WeatherKind.SNOW
+    WeatherGroup.THUNDER -> WeatherKind.THUNDERSTORMS
+    WeatherGroup.CLOUDY -> WeatherKind.CLOUDY
 }
 private fun weatherDescription(code: Int): String = when (code) {
     0 -> "Selge"

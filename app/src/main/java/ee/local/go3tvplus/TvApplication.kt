@@ -4,6 +4,7 @@ import android.app.Application
 import ee.local.go3tvplus.data.AuthCoordinator
 import ee.local.go3tvplus.data.DemoGo3Gateway
 import ee.local.go3tvplus.data.Go3HttpGateway
+import ee.local.go3tvplus.data.IlmateenistusGateway
 import ee.local.go3tvplus.data.OpenMeteoWeatherGateway
 import ee.local.go3tvplus.data.PeatusTransitGateway
 import ee.local.go3tvplus.data.TvRepository
@@ -28,6 +29,7 @@ class TvApplication : Application() {
             repository = TvRepository(gateway, auth, AppDatabase.create(this)),
             preferences = TvPreferences(this),
             weather = OpenMeteoWeatherGateway(),
+            stations = IlmateenistusGateway(),
             transit = PeatusTransitGateway(),
             isDemo = BuildConfig.DEMO_MODE,
         )
@@ -39,6 +41,7 @@ data class AppContainer(
     val repository: TvRepository,
     val preferences: TvPreferences,
     val weather: OpenMeteoWeatherGateway,
+    val stations: IlmateenistusGateway,
     val transit: PeatusTransitGateway,
     val isDemo: Boolean,
 )

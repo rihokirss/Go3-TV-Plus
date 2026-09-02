@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.PlaybackException
 import ee.local.go3tvplus.AppContainer
 import ee.local.go3tvplus.data.AuthCoordinator
+import ee.local.go3tvplus.data.IlmateenistusGateway
 import ee.local.go3tvplus.data.OpenMeteoWeatherGateway
 import ee.local.go3tvplus.data.PeatusTransitGateway
 import ee.local.go3tvplus.data.TvRepository
@@ -14,6 +15,7 @@ import ee.local.go3tvplus.data.local.ChannelPreference
 import ee.local.go3tvplus.data.local.ScheduledProgramAction
 import ee.local.go3tvplus.data.local.TvPreferences
 import ee.local.go3tvplus.domain.Channel
+import ee.local.go3tvplus.domain.DEFAULT_SEA_ROUTE
 import ee.local.go3tvplus.domain.DeviceAuthState
 import ee.local.go3tvplus.domain.Go3Failure
 import ee.local.go3tvplus.domain.PlaybackTicket
@@ -31,6 +33,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -53,6 +57,7 @@ class TvViewModel(
     private val repository: TvRepository,
     private val preferences: TvPreferences,
     private val weatherGateway: OpenMeteoWeatherGateway,
+    private val stationsGateway: IlmateenistusGateway,
     private val transitGateway: PeatusTransitGateway,
     private val tvPlayer: TvPlayer,
     isDemo: Boolean,
@@ -396,7 +401,7 @@ class TvViewModel(
             Overlay.SUBTITLE_SETTINGS -> handleLanguageSettingsKey(event.keyCode, SUBTITLE_LANGUAGE_OPTIONS)
             Overlay.DISPLAY_SETTINGS -> handleDisplaySettingsKey(event.keyCode)
             Overlay.WEATHER_LOCATION -> handleWeatherLocationKey(event.keyCode)
-            Overlay.WEATHER -> true
+            Overlay.WEATHER -> handleWeatherKey(event.keyCode)
             Overlay.TRANSIT_STOP_SETTINGS -> handleTransitStopSettingsKey(event.keyCode)
             Overlay.TRANSIT -> handleTransitKey(event.keyCode)
             Overlay.TONIGHT -> handleTonightKey(event.keyCode)
@@ -1177,9 +1182,47 @@ class TvViewModel(
 
     private fun openWeather() {
         val current = snapshot.weather
-        mutableState.update { it.copy(overlay = Overlay.WEATHER, settingsReturnOverlay = Overlay.NONE, weather = it.weather.copy(error = null)) }
+        mutableState.update {
+            it.copy(overlay = Overlay.WEATHER, settingsReturnOverlay = Overlay.NONE, weather = it.weather.copy(error = null, seaError = null))
+        }
         val stale = current.forecast?.let { Duration.between(it.fetchedAt, Instant.now()) > WEATHER_MAX_AGE } != false
         if (stale) refreshWeather(current.location)
+        val seaStale = current.sea?.let { Duration.between(it.fetchedAt, Instant.now()) > WEATHER_MAX_AGE } != false
+        if (seaStale) refreshSea()
+    }
+
+    /** Vasak/parem vahetab ilma- ja merelehte; OK värskendab avatud lehe andmed. */
+    private fun handleWeatherKey(keyCode: Int): Boolean {
+        when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> updateWeather {
+                copy(page = if (page == WeatherPage.WEATHER) WeatherPage.SEA else WeatherPage.WEATHER)
+            }
+            in CONFIRM_KEYS -> if (snapshot.weather.page == WeatherPage.SEA) refreshSea() else refreshWeather(snapshot.weather.location)
+        }
+        return true
+    }
+
+    private fun refreshSea() {
+        if (snapshot.weather.seaLoading) return
+        viewModelScope.launch {
+            updateWeather { copy(seaLoading = true, seaError = null) }
+            val route = DEFAULT_SEA_ROUTE
+            runCatching {
+                coroutineScope {
+                    val forecast = async { weatherGateway.seaForecast(route) }
+                    // Jaamade XML on lisaväärtus; selle viga ei tohi kogu merelehte tühjaks jätta.
+                    val observations = async { runCatching { stationsGateway.observations(route.stationNames) }.getOrDefault(emptyMap()) }
+                    forecast.await().copy(
+                        harbourObservation = observations.await()[route.harbour.stationName],
+                        destinationObservation = observations.await()[route.destination.stationName],
+                    )
+                }
+            }
+                .onSuccess { sea -> updateWeather { copy(sea = sea, seaLoading = false, seaError = null) } }
+                .onFailure { error ->
+                    updateWeather { copy(seaLoading = false, seaError = "Mereilma värskendamine ebaõnnestus: ${error.message ?: "tundmatu viga"}") }
+                }
+        }
     }
 
     private fun openWeatherLocationSettings() {
@@ -1837,6 +1880,7 @@ class TvViewModel(
             container.repository,
             container.preferences,
             container.weather,
+            container.stations,
             container.transit,
             player,
             container.isDemo,
