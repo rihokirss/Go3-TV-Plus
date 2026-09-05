@@ -1,16 +1,16 @@
 <resources>
-    <string name="app_name">Go3 TV+ nupusuunaja</string>
-    <string name="brand_name">Go3 TV+</string>
+    <string name="app_name">Go3 Air nupusuunaja</string>
+    <string name="brand_name">Go3 Air</string>
     <string name="status_configured">Nupusuunaja on seadistatud. Kontrolli ühendust või taasta nupu algne käitumine.</string>
     <string name="status_ready">Valmis seadistamiseks. Esimesel korral kinnita teleri ADB dialoogis „Luba alati”.</string>
     <string name="status_connecting">Ühendun teleri kohaliku ADB-ga. Kui ilmub luba küsiv dialoog, vali „Luba alati” ja kinnita.</string>
-    <string name="status_running">Valmis. %1$s nupp avab nüüd Go3 TV+ ning abirakendus taastab suunamise pärast restarti.</string>
+    <string name="status_running">Valmis. %1$s nupp avab nüüd Go3 Airi ning abirakendus taastab suunamise pärast restarti.</string>
     <string name="status_setup_failed">Seadistamine ebaõnnestus: %1$s</string>
     <string name="status_restoring">Taastan %1$s-i algse %2$s-nupu käitumise…</string>
     <string name="status_restored">%1$s-i algne %2$s-nupu käitumine on taastatud.</string>
     <string name="status_restore_failed">Taastamine ebaõnnestus: %1$s</string>
     <string name="action_setup">Seo ADB ja käivita</string>
     <string name="action_restore">Taasta %1$s nupp</string>
-    <string name="accessibility_service_label">Go3 TV+ Sony nupusuunaja</string>
-    <string name="accessibility_service_description">Suunab Sony puldi Netflixi nupu Go3 TV+ rakendusse.</string>
+    <string name="accessibility_service_label">Go3 Air Sony nupusuunaja</string>
+    <string name="accessibility_service_description">Suunab Sony puldi Netflixi nupu Go3 Airi rakendusse.</string>
 </resources>

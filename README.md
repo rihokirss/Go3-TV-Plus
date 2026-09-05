@@ -1,4 +1,4 @@
-# Go3 TV+
+# Go3 Air
 
 Mitteametlik Android TV klient kiireks ja puldisõbralikuks Go3 otse-TV vaatamiseks. Rakendus avab viimase kanali, hoiab video telekava all mängimas ning teeb kanalivahetuse võimalikuks nii D-padi, `CH+/CH−` kui ka numbriklahvidega.
 
@@ -35,19 +35,19 @@ Samsung Tizeni ja LG webOS-i jaoks see APK ei sobi. Need platvormid vajavad eral
 
 ### 1. Laadi APK alla
 
-Ava GitHubi lehel [Releases](https://github.com/rihokirss/Go3-TV-Plus/releases/latest) ja laadi alla `Go3-TV-Plus-<versioon>.apk`.
+Ava GitHubi lehel [Releases](https://github.com/rihokirss/Go3-TV-Plus/releases/latest) ja laadi alla `Go3-Air-<versioon>.apk`.
 
 ### 2. Paigalda mälupulgalt
 
 Järgmised sammud eeldavad, et teleris on juba rakendus, millega saab mälupulgal olevaid faile sirvida.
 
-1. Kopeeri allalaaditud `Go3-TV-Plus-<versioon>.apk` arvutis mälupulga juurkausta, et seda oleks teleris lihtne leida.
+1. Kopeeri allalaaditud `Go3-Air-<versioon>.apk` arvutis mälupulga juurkausta, et seda oleks teleris lihtne leida.
 2. Eemalda mälupulk arvutist turvaliselt ja ühenda see teleri USB-pessa.
 3. Ava teleris failibrauser ning vali USB-mäluseade.
 4. Leia kopeeritud APK ja vajuta puldil `OK`.
 5. Kui Android paigaldamise blokeerib, vali kuvatud `Seaded` ning luba sellel failibrauseril tundmatuid rakendusi installida.
 6. Mine failibrauserisse tagasi, ava APK uuesti ja vali `Installi`.
-7. Pärast paigaldamist vali `Ava` või käivita **Go3 TV+** teleri rakenduste nimekirjast.
+7. Pärast paigaldamist vali `Ava` või käivita **Go3 Air** teleri rakenduste nimekirjast.
 
 FAT32-vormingus mälupulk töötab Android TV seadmetega üldjuhul kõige kindlamalt. Kui teler APK-d ei näita, vali failibrauseris kõigi failide kuvamine või proovi teist USB-pesa.
 
@@ -65,7 +65,7 @@ Luba teleris arendaja valikud ja Wireless debugging, ühenda arvuti teleriga nin
 
 ```bash
 adb connect TELERI_IP:ADB_PORT
-adb install -r Go3-TV-Plus-0.4.33.apk
+adb install -r Go3-Air-0.4.33.apk
 ```
 
 `-r` uuendab olemasolevat rakendust ja jätab sidumise ning seaded alles. Kui Android kuvab `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, on sama paketiga rakendus allkirjastatud teise võtmega. Vana rakenduse eemaldamine lahendab konflikti, kuid kustutab selle kohalikud seaded ja konto sidumise.
@@ -74,7 +74,7 @@ Tehniline paketitunnus on ajaloolise uuendusühilduvuse tõttu `ee.local.go3tvpl
 
 ### 3. Seo Go3 konto
 
-1. Ava teleris Go3 TV+.
+1. Ava teleris Go3 Air.
 2. Skanni kuvatav QR-kood telefoniga või sisesta ekraanil olev seadmekood.
 3. Kinnita seade oma Go3 kontol.
 4. Kui kontol on mitu Go3 profiili, vali soovitud vaatamisprofiil.
@@ -112,7 +112,7 @@ Ilmateate vaikimisi asukoht on Suurupi. Seda saab muuta menüüst
 
 Repos on eraldi valikuline, teleri tootja ära tundev `tclredirect` helper. See
 suunab testitud TCL Google TV Prime Video nupu või Sony BRAVIA Netflixi nupu
-Go3 TV+ rakendusse ning töötab ka pärast teleri täielikku restarti. TCL-i
+Go3 Airi rakendusse ning töötab ka pärast teleri täielikku restarti. TCL-i
 lahendus eeldab, et võrgu-ADB jääb teleris lubatuks; Sony lahendus kasutab
 püsivat ligipääsetavuse võtmefiltrit ega vaja pärast seadistamist võrgu-ADB-d.
 Helper ei kuulu põhi-APK-sse, sest lahendus sõltub konkreetsest telerist ja
@@ -146,7 +146,7 @@ Vaja on JDK 17 ja Android SDK 37.
 Minifitseeritud sideload-APK tekib asukohta:
 
 ```text
-dist/Go3-TV-Plus-<versioon>.apk
+dist/Go3-Air-<versioon>.apk
 ```
 
 Avaldatud versiooni allkirjavõtit repos ei hoita. Teise võtmega ehitatud APK ei saa GitHub Release'ist paigaldatud rakendust kohapeal uuendada.

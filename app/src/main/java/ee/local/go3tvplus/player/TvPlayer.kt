@@ -73,10 +73,10 @@ class TvPlayer(context: Context) {
     private val mediaSession = MediaSession.Builder(appContext, player)
         .setId("${appContext.packageName}.main")
         .build()
-    private val httpFactory = DefaultHttpDataSource.Factory().setUserAgent("Go3 TV+/${BuildConfig.VERSION_NAME}")
+    private val httpFactory = DefaultHttpDataSource.Factory().setUserAgent("Go3 Air/${BuildConfig.VERSION_NAME}")
     private var listener: Listener? = null
     private var baselineLiveOffsetMs: Long? = null
-    private var currentChannelName = "Go3 TV+"
+    private var currentChannelName = "Go3 Air"
     private var currentProgramTitle: String? = null
 
     init {
@@ -240,6 +240,6 @@ private const val MIN_SMOOTH_VIDEO_FRAME_RATE = 48
 private fun nowPlayingMetadata(channelName: String, programTitle: String?): MediaMetadata =
     MediaMetadata.Builder()
         .setTitle(programTitle ?: channelName)
-        .setArtist(if (programTitle == null) "Go3 TV+" else channelName)
+        .setArtist(if (programTitle == null) "Go3 Air" else channelName)
         .setSubtitle(channelName)
         .build()

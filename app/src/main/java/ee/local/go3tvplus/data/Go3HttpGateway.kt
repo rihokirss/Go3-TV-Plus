@@ -65,7 +65,7 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
         "Android",
         Build.VERSION.RELEASE,
         Build.MANUFACTURER,
-        "Go3 TV+ ${BuildConfig.VERSION_NAME}",
+        "Go3 Air ${BuildConfig.VERSION_NAME}",
     ).joinToString(";") { it.replace(';', '_') } + ";"
     private val cookieJar = MemoryCookieJar()
     private val client = OkHttpClient.Builder()

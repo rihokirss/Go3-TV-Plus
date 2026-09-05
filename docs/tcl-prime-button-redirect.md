@@ -1,7 +1,7 @@
 # TCL Prime Video and Sony Netflix button redirect
 
 This note describes the device-specific workarounds that make the TCL Prime
-Video and Sony Netflix remote buttons launch Go3 TV+. The helper is
+Video and Sony Netflix remote buttons launch Go3 Air. The helper is
 intentionally separate from the TV app: branded global keys are intercepted by
 Android before a normal activity can receive them.
 
@@ -75,7 +75,7 @@ adb -s <TCL_IP>:5555 install -r \
   tclredirect/build/outputs/apk/release/tclredirect-release.apk
 ```
 
-Open **Go3 TV+ nupusuunaja**, choose **Seo ADB ja käivita**, and approve the
+Open **Go3 Air nupusuunaja**, choose **Seo ADB ja käivita**, and approve the
 Android ADB dialog with **Always allow** selected. This is the helper's own key,
 not the computer's key. Network ADB must remain enabled on the TCL.
 
@@ -110,7 +110,7 @@ available”.
 
 On Sony, the same helper enables its own accessibility key-filter service using
 the one-time authorized local ADB connection. The service consumes
-`KEYCODE_BUTTON_4` before Sony's global-key handler and launches Go3 TV+.
+`KEYCODE_BUTTON_4` before Sony's global-key handler and launches Go3 Air.
 Enabling it preserves any accessibility services that were already active.
 The enabled-service setting is persistent, so no shell listener, computer,
 network ADB connection, or periodic recovery job is required after setup.
@@ -121,7 +121,7 @@ from the enabled accessibility-service list and re-enables Netflix. The tested
 physical press was recorded as:
 
 ```text
-I/Go3ButtonRedirect: Netflix button intercepted; opening Go3 TV+
+I/Go3ButtonRedirect: Netflix button intercepted; opening Go3 Air
 mResumedActivity: ee.local.go3tvplus.debug/ee.local.go3tvplus.MainActivity
 ```
 

@@ -1604,7 +1604,7 @@ class TvViewModel(
                 scheduleProlong(ticket)
                 pendingChannelId = resolvedProgram.channelId
                 retryCount = 0
-                val channelName = snapshot.channels.firstOrNull { it.id == resolvedProgram.channelId }?.name ?: "Go3 TV+"
+                val channelName = snapshot.channels.firstOrNull { it.id == resolvedProgram.channelId }?.name ?: "Go3 Air"
                 mutableState.update { it.copy(catchupProgram = resolvedProgram) }
                 tvPlayer.play(ticket, channelName, resolvedProgram.title)
             } catch (error: Exception) {

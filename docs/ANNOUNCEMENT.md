@@ -4,7 +4,7 @@ Kui ametlik teleriäpp on nii aeglane ja ebamugav, et kanalivahetuseks läheb va
 
 Vastus oli: piisavalt keeruline, et sellest kujunes päris projekt.
 
-Valmis sai Go3 TV+ — tagasihoidlike eesmärkidega maailma mugavaim ja kiireim telekavaatamise äpp. Vähemalt meie elutoa sõltumatu ja täiesti erapooletu mõõtelabori hinnangul.
+Valmis sai Go3 Air — tagasihoidlike eesmärkidega maailma mugavaim ja kiireim telekavaatamise äpp. Vähemalt meie elutoa sõltumatu ja täiesti erapooletu mõõtelabori hinnangul.
 
 Äpp avab kohe viimase kanali, vahetab kanaleid numbrite ja `CH+/CH−` nuppudega, näitab läbipaistvat telekava mängiva pildi peal, oskab järelvaatamist, ajanihet, lemmikuid, saate meeldetuletusi ning jätab heli- ja subtiitrieelistused meelde. Ehk teeb neid asju, mida teleriäpilt võiks üsna põhjendatult oodata.
 

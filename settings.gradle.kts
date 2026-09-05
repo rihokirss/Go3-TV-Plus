@@ -14,6 +14,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Go3TvPlus"
+rootProject.name = "Go3Air"
 include(":app")
 include(":tclredirect")

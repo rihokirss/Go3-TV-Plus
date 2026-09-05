@@ -14,7 +14,7 @@ data class RedirectProfile(
         get() = "$deviceName $sourceButtonName-nupu suunaja"
 
     val description: String
-        get() = "Abirakendus avab $sourceButtonName nupuga Go3 TV+ ja taastab suunamise pärast teleri täielikku restarti."
+        get() = "Abirakendus avab $sourceButtonName nupuga Go3 Airi ja taastab suunamise pärast teleri täielikku restarti."
 
     companion object {
         fun current(): RedirectProfile {

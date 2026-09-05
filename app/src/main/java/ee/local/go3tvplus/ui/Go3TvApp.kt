@@ -160,7 +160,7 @@ private fun StartupErrorScreen(message: String, onRetry: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            Text("Go3 TV+", color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Bold)
+            Text("Go3 Air", color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Bold)
             Text(message, color = Go3Colors.ErrorText, fontSize = 20.sp)
             Button(onClick = onRetry, modifier = Modifier.focusRequester(retryFocus)) {
                 Text("Proovi uuesti")
@@ -187,7 +187,7 @@ private fun PairingScreen(auth: DeviceAuthState, onStart: () -> Unit) {
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
-            Text("Go3 TV+", color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Bold)
+            Text("Go3 Air", color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Bold)
             when (auth) {
                 DeviceAuthState.Restoring -> Unit
                 DeviceAuthState.Idle -> {
@@ -424,29 +424,20 @@ private fun PlaybackStartupBackdrop(loading: Boolean) {
         Modifier.fillMaxSize().background(Go3Colors.AppBackground),
     ) {
         Image(
-            painter = painterResource(R.drawable.splash_background_v1),
+            painter = painterResource(R.drawable.splash_air),
             contentDescription = null,
             modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop,
+            contentScale = ContentScale.FillBounds,
         )
-        Column(
-            modifier = Modifier.align(Alignment.CenterStart).padding(start = 150.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(18.dp),
-        ) {
+        // The wordmark is part of the same image Android shows before Compose starts.
+        // Only the live loading status is overlaid, so the identity never jumps.
+        if (loading) {
             Text(
-                "Go3 TV+",
-                color = Color.White,
-                fontSize = 58.sp,
-                fontWeight = FontWeight.Bold,
+                "Ühendan kanalit…",
+                color = Go3Colors.TextSecondary,
+                fontSize = 17.sp,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 48.dp),
             )
-            if (loading) {
-                Text(
-                    "Ühendan kanalit…",
-                    color = Go3Colors.TextSecondary,
-                    fontSize = 17.sp,
-                )
-            }
         }
     }
 }
@@ -1107,7 +1098,7 @@ private fun AppSettingsOverlay(state: TvUiState) {
             Box(Modifier.fillMaxWidth()) {
                 OverlayHeader(
                     "SEADED",
-                    "Go3 TV+",
+                    "Go3 Air",
                     keyHints = listOf("▲▼" to "vali", "OK" to "ava/muuda", "BACK" to "sulge"),
                 )
                 Text(

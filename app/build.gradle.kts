@@ -12,8 +12,8 @@ android {
         applicationId = "ee.local.go3tvplus"
         minSdk = 28
         targetSdk = 35
-        versionCode = 40
-        versionName = "0.4.33"
+        versionCode = 42
+        versionName = "0.4.34-air-preview2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -65,7 +65,7 @@ tasks.register<Copy>("packageSideloadApk") {
     dependsOn("assembleSideload")
     from(layout.buildDirectory.file("outputs/apk/sideload/app-sideload.apk"))
     into(rootProject.layout.projectDirectory.dir("dist"))
-    rename { "Go3-TV-Plus-${android.defaultConfig.versionName}.apk" }
+    rename { "Go3-Air-${android.defaultConfig.versionName}.apk" }
 }
 
 ksp {

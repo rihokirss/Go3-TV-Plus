@@ -23,7 +23,7 @@ class SonyButtonAccessibilityService : AccessibilityService() {
         if (event.keyCode != KeyEvent.KEYCODE_BUTTON_4) return false
 
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-            Log.i(TAG, "Netflix button intercepted; opening Go3 TV+")
+            Log.i(TAG, "Netflix button intercepted; opening Go3 Air")
             startActivity(
                 Intent(Intent.ACTION_MAIN).apply {
                     component = ComponentName(GO3_PACKAGE, GO3_ACTIVITY)
