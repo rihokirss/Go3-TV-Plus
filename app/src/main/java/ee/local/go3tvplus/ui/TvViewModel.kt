@@ -15,7 +15,7 @@ import ee.local.go3tvplus.data.local.ChannelPreference
 import ee.local.go3tvplus.data.local.ScheduledProgramAction
 import ee.local.go3tvplus.data.local.TvPreferences
 import ee.local.go3tvplus.domain.Channel
-import ee.local.go3tvplus.domain.DEFAULT_SEA_ROUTE
+import ee.local.go3tvplus.domain.SeaLocationPreferences
 import ee.local.go3tvplus.domain.DeviceAuthState
 import ee.local.go3tvplus.domain.Go3Failure
 import ee.local.go3tvplus.domain.PlaybackTicket
@@ -83,6 +83,8 @@ class TvViewModel(
     private var noticeJob: Job? = null
     private var startupRecoveryJob: Job? = null
     private var overlayRefreshJob: Job? = null
+    private var seaForecastJob: Job? = null
+    private var seaCatalogJob: Job? = null
     private var activeTicket: PlaybackTicket? = null
     private var pendingChannelId: String? = null
     private var pendingSeekOverlayChannelId: String? = null
@@ -117,7 +119,14 @@ class TvViewModel(
         viewModelScope.launch {
             val location = preferences.weatherLocation()
             val stop = preferences.transitStop()
-            mutableState.update { it.copy(weather = it.weather.copy(location = location), transit = it.transit.copy(stop = stop)) }
+            val seaLocations = preferences.seaLocations()
+            mutableState.update {
+                it.copy(
+                    weather = it.weather.copy(location = location),
+                    transit = it.transit.copy(stop = stop),
+                    seaSettings = it.seaSettings.copy(preferences = seaLocations),
+                )
+            }
         }
         programActionJob = viewModelScope.launch {
             val now = System.currentTimeMillis()
@@ -397,8 +406,10 @@ class TvViewModel(
             Overlay.APP_SETTINGS -> handleAppSettingsKey(event.keyCode)
             Overlay.CHANNEL_SETTINGS -> handleChannelSettingsKey(event.keyCode)
             Overlay.PROFILE_SETTINGS -> handleProfileSettingsKey(event.keyCode)
-            Overlay.AUDIO_SETTINGS -> handleLanguageSettingsKey(event.keyCode, AUDIO_LANGUAGE_OPTIONS)
-            Overlay.SUBTITLE_SETTINGS -> handleLanguageSettingsKey(event.keyCode, SUBTITLE_LANGUAGE_OPTIONS)
+            Overlay.LANGUAGE_SETTINGS -> handleLanguageSettingsKey(event.keyCode)
+            Overlay.LOCATIONS_SETTINGS -> handleLocationsKey(event.keyCode)
+            Overlay.SEA_SETTINGS -> handleSeaSettingsKey(event.keyCode)
+            Overlay.SEA_STATION_PICKER -> handleSeaStationKey(event.keyCode)
             Overlay.DISPLAY_SETTINGS -> handleDisplaySettingsKey(event.keyCode)
             Overlay.WEATHER_LOCATION -> handleWeatherLocationKey(event.keyCode)
             Overlay.WEATHER -> handleWeatherKey(event.keyCode)
@@ -418,7 +429,7 @@ class TvViewModel(
             seekCloseJob?.cancel()
         }
         if (current.overlay == Overlay.TRANSIT || current.overlay == Overlay.TONIGHT) overlayRefreshJob?.cancel()
-        val returnOverlay = if (current.overlay.returnsToParent) current.settingsReturnOverlay else Overlay.NONE
+        val returnOverlay = SettingsNavigation.parent(current.overlay, current.settingsReturnOverlay)
         mutableState.update {
             it.copy(
                 overlay = returnOverlay,
@@ -977,11 +988,12 @@ class TvViewModel(
         when (AppSetting.entries[snapshot.appSettingsIndex]) {
             AppSetting.PROFILE -> openProfileSettings()
             AppSetting.CHANNELS -> openChannelSettings()
-            AppSetting.AUDIO -> openLanguageSettings(Overlay.AUDIO_SETTINGS, AUDIO_LANGUAGE_OPTIONS, snapshot.audioLanguagePreference)
-            AppSetting.SUBTITLES -> openLanguageSettings(Overlay.SUBTITLE_SETTINGS, SUBTITLE_LANGUAGE_OPTIONS, snapshot.subtitleLanguagePreference)
+            AppSetting.LANGUAGES -> openSubMenu(Overlay.LANGUAGE_SETTINGS, index = 0)
             AppSetting.DISPLAY -> openSubMenu(Overlay.DISPLAY_SETTINGS, index = 0)
-            AppSetting.WEATHER -> openWeatherLocationSettings()
-            AppSetting.TRANSIT -> openTransitStopSettings()
+            AppSetting.LOCATIONS -> {
+                openSubMenu(Overlay.LOCATIONS_SETTINGS, index = 0)
+                mutableState.update { it.copy(locationsIndex = 0) }
+            }
             AppSetting.REFRESH_PACKAGE -> refreshChannelPackage()
         }
     }
@@ -998,7 +1010,9 @@ class TvViewModel(
             runCatching { repository.profiles() }
                 .onSuccess { profiles ->
                     val selected = profiles.indexOfFirst { it.id == snapshot.selectedProfileId }.coerceAtLeast(0)
-                    mutableState.update { it.copy(profiles = profiles, menuIndex = selected) }
+                    mutableState.update {
+                        it.copy(profiles = profiles, menuIndex = if (it.overlay == Overlay.PROFILE_SETTINGS) selected else it.menuIndex)
+                    }
                 }
                 .onFailure(::showError)
         }
@@ -1038,27 +1052,127 @@ class TvViewModel(
         }
     }
 
-    private fun openLanguageSettings(overlay: Overlay, options: List<Pair<String?, String>>, active: String?) {
-        openSubMenu(overlay, options.indexOfFirst { it.first == active }.coerceAtLeast(0))
-    }
-
-    private fun handleLanguageSettingsKey(keyCode: Int, options: List<Pair<String?, String>>): Boolean = handleListKey(
-        keyCode,
-        index = snapshot.menuIndex,
-        count = options.size,
-        select = ::selectMenuIndex,
-    ) {
-        val language = options[snapshot.menuIndex].first
-        val audio = if (snapshot.overlay == Overlay.AUDIO_SETTINGS) language ?: "auto" else snapshot.audioLanguagePreference
-        val subtitle = if (snapshot.overlay == Overlay.SUBTITLE_SETTINGS) language else snapshot.subtitleLanguagePreference
+    private fun handleLanguageSettingsKey(keyCode: Int): Boolean {
+        val current = snapshot
+        if (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+            selectMenuIndex(stepIndex(current.menuIndex, if (keyCode == KeyEvent.KEYCODE_DPAD_UP) -1 else 1, LanguageSetting.entries.size))
+            return true
+        }
+        if (keyCode !in CONFIRM_KEYS && keyCode != KeyEvent.KEYCODE_DPAD_LEFT && keyCode != KeyEvent.KEYCODE_DPAD_RIGHT) return false
+        val direction = if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) -1 else 1
+        val audio = if (LanguageSetting.entries[current.menuIndex] == LanguageSetting.AUDIO)
+            cycleOption(AUDIO_LANGUAGE_OPTIONS.map { it.first }, current.audioLanguagePreference, direction)
+        else current.audioLanguagePreference
+        val subtitle = if (LanguageSetting.entries[current.menuIndex] == LanguageSetting.SUBTITLE)
+            cycleOption(SUBTITLE_LANGUAGE_OPTIONS.map { it.first }, current.subtitleLanguagePreference, direction)
+        else current.subtitleLanguagePreference
         tvPlayer.applyTrackPreferences(audio, subtitle)
         mutableState.update {
-            it.copy(overlay = Overlay.APP_SETTINGS, audioLanguagePreference = audio, subtitleLanguagePreference = subtitle)
+            it.copy(audioLanguagePreference = audio, subtitleLanguagePreference = subtitle)
         }
         viewModelScope.launch {
             preferences.savePreferredAudio(audio)
             preferences.savePreferredSubtitle(subtitle)
         }
+        return true
+    }
+
+    private fun handleLocationsKey(keyCode: Int): Boolean = handleListKey(
+        keyCode, snapshot.locationsIndex, LocationSetting.entries.size,
+        acceptRight = true,
+        select = { index -> mutableState.update { it.copy(locationsIndex = index) } },
+    ) {
+        when (LocationSetting.entries[snapshot.locationsIndex]) {
+            LocationSetting.WEATHER -> openWeatherLocationSettings()
+            LocationSetting.TRANSIT -> openTransitStopSettings()
+            LocationSetting.SEA -> mutableState.update {
+                it.copy(overlay = Overlay.SEA_SETTINGS, seaSettings = it.seaSettings.copy(menuIndex = 0))
+            }
+        }
+    }
+
+    private fun handleSeaSettingsKey(keyCode: Int): Boolean {
+        val current = snapshot.seaSettings
+        when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> mutableState.update {
+                it.copy(seaSettings = it.seaSettings.copy(menuIndex = stepIndex(current.menuIndex, if (keyCode == KeyEvent.KEYCODE_DPAD_UP) -1 else 1, 3)))
+            }
+            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, in CONFIRM_KEYS -> {
+                if (current.menuIndex == 2) {
+                    saveSeaLocations(current.preferences.copy(
+                        forecastPosition = current.preferences.forecastPosition.cycle(if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) -1 else 1),
+                    ))
+                } else if (keyCode != KeyEvent.KEYCODE_DPAD_LEFT) {
+                    openSeaStationPicker(current.menuIndex == 1)
+                }
+            }
+            else -> return false
+        }
+        return true
+    }
+
+    private fun openSeaStationPicker(second: Boolean) {
+        val settings = snapshot.seaSettings
+        val active = if (second) settings.preferences.second else settings.preferences.first
+        mutableState.update {
+            it.copy(overlay = Overlay.SEA_STATION_PICKER, seaSettings = it.seaSettings.copy(
+                editingSecond = second,
+                stationIndex = settings.stations.indexOfFirst { station -> station.stationName == active.stationName }.coerceAtLeast(0),
+            ))
+        }
+        if (settings.stations.isEmpty()) loadSeaStations()
+    }
+
+    private fun loadSeaStations() {
+        if (seaCatalogJob?.isActive == true) return
+        seaCatalogJob = viewModelScope.launch {
+            mutableState.update { it.copy(seaSettings = it.seaSettings.copy(loading = true, error = null)) }
+            try {
+                val stations = stationsGateway.stations()
+                if (stations.isEmpty()) error("Jaamade nimekiri on tühi")
+                mutableState.update {
+                    val settings = it.seaSettings
+                    val active = if (settings.editingSecond) settings.preferences.second else settings.preferences.first
+                    it.copy(seaSettings = settings.copy(
+                        stations = stations, loading = false,
+                        stationIndex = stations.indexOfFirst { station -> station.stationName == active.stationName }.coerceAtLeast(0),
+                    ))
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                mutableState.update { it.copy(seaSettings = it.seaSettings.copy(loading = false, error = "Jaamade laadimine ebaõnnestus. OK proovib uuesti.")) }
+            }
+        }
+    }
+
+    private fun handleSeaStationKey(keyCode: Int): Boolean = handleListKey(
+        keyCode, snapshot.seaSettings.stationIndex, snapshot.seaSettings.stations.size,
+        select = { index -> mutableState.update { it.copy(seaSettings = it.seaSettings.copy(stationIndex = index)) } },
+    ) {
+        val settings = snapshot.seaSettings
+        if (settings.stations.isEmpty()) loadSeaStations()
+        else settings.stations.getOrNull(settings.stationIndex)?.let { point ->
+            val other = if (settings.editingSecond) settings.preferences.first else settings.preferences.second
+            if (point.stationName == other.stationName) {
+                showNotice("See jaam on juba teiseks mõõtepunktiks valitud")
+            } else {
+                saveSeaLocations(if (settings.editingSecond) settings.preferences.copy(second = point) else settings.preferences.copy(first = point))
+                mutableState.update { it.copy(overlay = Overlay.SEA_SETTINGS) }
+            }
+        }
+    }
+
+    private fun saveSeaLocations(value: SeaLocationPreferences) {
+        seaForecastJob?.cancel()
+        mutableState.update {
+            it.copy(
+                seaSettings = it.seaSettings.copy(preferences = value),
+                weather = it.weather.copy(sea = null, seaLoading = false, seaError = null),
+            )
+        }
+        viewModelScope.launch { preferences.saveSeaLocations(value) }
+        // Forecasts are loaded on opening the weather panel; arrow presses stay instant.
     }
 
     private fun handleDisplaySettingsKey(keyCode: Int): Boolean {
@@ -1204,9 +1318,9 @@ class TvViewModel(
 
     private fun refreshSea() {
         if (snapshot.weather.seaLoading) return
-        viewModelScope.launch {
+        val route = snapshot.seaSettings.preferences.route()
+        seaForecastJob = viewModelScope.launch {
             updateWeather { copy(seaLoading = true, seaError = null) }
-            val route = DEFAULT_SEA_ROUTE
             runCatching {
                 coroutineScope {
                     val forecast = async { weatherGateway.seaForecast(route) }
@@ -1218,9 +1332,14 @@ class TvViewModel(
                     )
                 }
             }
-                .onSuccess { sea -> updateWeather { copy(sea = sea, seaLoading = false, seaError = null) } }
+                .onSuccess { sea ->
+                    if (snapshot.seaSettings.preferences.route() == route)
+                        updateWeather { copy(sea = sea, seaLoading = false, seaError = null) }
+                }
                 .onFailure { error ->
-                    updateWeather { copy(seaLoading = false, seaError = "Mereilma värskendamine ebaõnnestus: ${error.message ?: "tundmatu viga"}") }
+                    if (error is CancellationException) throw error
+                    if (snapshot.seaSettings.preferences.route() == route)
+                        updateWeather { copy(seaLoading = false, seaError = "Mereilma värskendamine ebaõnnestus: ${error.message ?: "tundmatu viga"}") }
                 }
         }
     }
@@ -1230,7 +1349,7 @@ class TvViewModel(
         mutableState.update {
             it.copy(
                 overlay = Overlay.WEATHER_LOCATION,
-                settingsReturnOverlay = Overlay.APP_SETTINGS,
+                settingsReturnOverlay = Overlay.LOCATIONS_SETTINGS,
                 weather = it.weather.copy(error = null, search = SearchState(query = location.name, results = listOf(location))),
             )
         }
@@ -1241,7 +1360,7 @@ class TvViewModel(
     fun searchWeatherLocations() = runSearch(
         current = { snapshot.weather.search },
         publish = { search -> updateWeather { copy(search = search) } },
-        fetch = weatherGateway::searchLocations,
+        fetch = { query -> weatherGateway.searchLocations(query).take(5) },
         emptyMessage = "Asulat ei leitud",
         failureMessage = "Asukoha otsing ebaõnnestus",
     )
@@ -1266,7 +1385,7 @@ class TvViewModel(
         mutableState.update {
             it.copy(
                 overlay = it.settingsReturnOverlay,
-                weather = it.weather.copy(location = location, error = null, search = SearchState(query = location.name)),
+                weather = it.weather.copy(location = location, forecast = null, error = null, search = SearchState(query = location.name)),
             )
         }
         viewModelScope.launch { preferences.saveWeatherLocation(location) }
@@ -1362,7 +1481,7 @@ class TvViewModel(
         mutableState.update {
             it.copy(
                 overlay = Overlay.TRANSIT_STOP_SETTINGS,
-                settingsReturnOverlay = Overlay.APP_SETTINGS,
+                settingsReturnOverlay = Overlay.LOCATIONS_SETTINGS,
                 transit = it.transit.copy(search = SearchState(query = stop.name, results = listOf(stop))),
             )
         }
@@ -1373,7 +1492,7 @@ class TvViewModel(
     fun searchTransitStops() = runSearch(
         current = { snapshot.transit.search },
         publish = { search -> updateTransit { copy(search = search) } },
-        fetch = transitGateway::searchStops,
+        fetch = { query -> transitGateway.searchStops(query).take(6) },
         emptyMessage = "Peatust ei leitud",
         failureMessage = "Peatuse otsing ebaõnnestus",
     )
@@ -1878,10 +1997,17 @@ class TvViewModel(
             publish(current().copy(loading = true, error = null))
             runCatching { fetch(query) }
                 .onSuccess { results ->
-                    publish(current().copy(loading = false, results = results, index = -1, error = if (results.isEmpty()) emptyMessage else null))
+                    val latest = current()
+                    publish(if (latest.query.trim() == query)
+                        latest.copy(loading = false, results = results, index = -1, error = if (results.isEmpty()) emptyMessage else null)
+                    else latest.copy(loading = false))
                 }
                 .onFailure { error ->
-                    publish(current().copy(loading = false, error = "$failureMessage: ${error.message ?: "tundmatu viga"}"))
+                    if (error is CancellationException) throw error
+                    val latest = current()
+                    publish(if (latest.query.trim() == query)
+                        latest.copy(loading = false, error = "$failureMessage: ${error.message ?: "tundmatu viga"}")
+                    else latest.copy(loading = false))
                 }
         }
     }

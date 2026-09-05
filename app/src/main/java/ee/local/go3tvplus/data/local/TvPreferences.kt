@@ -1,6 +1,7 @@
 package ee.local.go3tvplus.data.local
 
 import android.content.Context
+import ee.local.go3tvplus.domain.SeaLocationPreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -61,9 +62,17 @@ class TvPreferences(private val context: Context) {
         val transitStopName = stringPreferencesKey("transit_stop_name")
         val transitStopPlatforms = stringSetPreferencesKey("transit_stop_platforms")
         val scheduledProgramActions = stringSetPreferencesKey("scheduled_program_actions")
+        val seaLocations = stringPreferencesKey("sea_locations")
     }
 
     private suspend fun snapshot(): Preferences = context.tvDataStore.data.first()
+
+    suspend fun seaLocations(): SeaLocationPreferences =
+        SeaLocationPreferencesCodec.decode(snapshot()[Keys.seaLocations])
+
+    suspend fun saveSeaLocations(value: SeaLocationPreferences) = context.tvDataStore.edit {
+        it[Keys.seaLocations] = SeaLocationPreferencesCodec.encode(value)
+    }
 
     suspend fun lastChannel(): String? = snapshot()[Keys.lastChannel]
     suspend fun saveLastChannel(id: String) = context.tvDataStore.edit { it[Keys.lastChannel] = id }

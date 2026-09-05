@@ -29,6 +29,29 @@ val DEFAULT_SEA_ROUTE = SeaRoute(
     seaLongitude = 24.50,
 )
 
+enum class SeaForecastPosition(val label: String) {
+    BETWEEN("Punktide vahel"), FIRST("Esimese punkti juures"), SECOND("Teise punkti juures");
+
+    fun cycle(direction: Int) = entries[Math.floorMod(ordinal + direction, entries.size)]
+}
+
+/** Observation stations and model forecast location are separate choices. */
+data class SeaLocationPreferences(
+    val first: SeaPoint = DEFAULT_SEA_ROUTE.harbour,
+    val second: SeaPoint = DEFAULT_SEA_ROUTE.destination,
+    val forecastPosition: SeaForecastPosition = SeaForecastPosition.BETWEEN,
+) {
+    fun route(): SeaRoute {
+        val point = when (forecastPosition) {
+            SeaForecastPosition.FIRST -> first.latitude to first.longitude
+            SeaForecastPosition.SECOND -> second.latitude to second.longitude
+            SeaForecastPosition.BETWEEN ->
+                (first.latitude + second.latitude) / 2 to (first.longitude + second.longitude) / 2
+        }
+        return SeaRoute(first, second, point.first, point.second)
+    }
+}
+
 /** Ilmateenistuse automaatjaama viimane mõõtmine; puuduvad väljad on null. */
 data class StationObservation(
     val stationName: String,

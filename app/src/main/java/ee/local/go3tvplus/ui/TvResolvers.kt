@@ -9,6 +9,18 @@ import java.time.ZoneId
 
 /** Puhas, testitav loogika, mida [TvViewModel] kasutab. */
 
+internal object SettingsNavigation {
+    fun parent(overlay: Overlay, returnOverlay: Overlay): Overlay = when (overlay) {
+        Overlay.LOCATIONS_SETTINGS -> Overlay.APP_SETTINGS
+        Overlay.SEA_SETTINGS -> Overlay.LOCATIONS_SETTINGS
+        Overlay.SEA_STATION_PICKER -> Overlay.SEA_SETTINGS
+        else -> if (overlay.returnsToParent) returnOverlay else Overlay.NONE
+    }
+}
+
+internal fun <T> cycleOption(options: List<T>, active: T, direction: Int): T =
+    options[Math.floorMod(options.indexOf(active).coerceAtLeast(0) + direction, options.size)]
+
 object ChannelNumberResolver {
     fun resolve(channels: List<Channel>, number: Int?): Channel? {
         if (number == null || number !in 1..999) return null

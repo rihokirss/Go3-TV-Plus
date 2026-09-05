@@ -329,20 +329,10 @@ private fun PlayerScreen(
             Overlay.APP_SETTINGS -> AppSettingsOverlay(state)
             Overlay.CHANNEL_SETTINGS -> ChannelSettingsOverlay(state)
             Overlay.PROFILE_SETTINGS -> ProfileSettingsOverlay(state)
-            Overlay.AUDIO_SETTINGS -> LanguageSettingsOverlay(
-                title = "HELIRAJA EELISTUS",
-                description = "Kehtib kõigil kanalitel; puuduva keele korral kasutatakse kanali vaikimisi heli",
-                options = AUDIO_LANGUAGE_OPTIONS,
-                selectedIndex = state.menuIndex,
-                activeLanguage = state.audioLanguagePreference,
-            )
-            Overlay.SUBTITLE_SETTINGS -> LanguageSettingsOverlay(
-                title = "SUBTIITRITE EELISTUS",
-                description = "Kehtib kõigil kanalitel ja järelvaatamisel",
-                options = SUBTITLE_LANGUAGE_OPTIONS,
-                selectedIndex = state.menuIndex,
-                activeLanguage = state.subtitleLanguagePreference,
-            )
+            Overlay.LANGUAGE_SETTINGS -> LanguageSettingsOverlay(state)
+            Overlay.LOCATIONS_SETTINGS -> LocationsSettingsOverlay(state)
+            Overlay.SEA_SETTINGS -> SeaSettingsOverlay(state.seaSettings)
+            Overlay.SEA_STATION_PICKER -> SeaStationPicker(state.seaSettings)
             Overlay.DISPLAY_SETTINGS -> DisplaySettingsOverlay(state)
             Overlay.WEATHER_LOCATION -> WeatherLocationOverlay(
                 search = state.weather.search,
@@ -1075,12 +1065,10 @@ private fun AppSettingsOverlay(state: TvUiState) {
     fun subtitle(setting: AppSetting): String = when (setting) {
         AppSetting.PROFILE -> state.profiles.firstOrNull { it.id == state.selectedProfileId }?.name ?: "Praegune Go3 profiil"
         AppSetting.CHANNELS -> "Lemmikud, numbrid ja järjekord"
-        AppSetting.AUDIO -> "${languageLabel(AUDIO_LANGUAGE_OPTIONS, state.audioLanguagePreference)} • kõigil kanalitel"
-        AppSetting.SUBTITLES -> "${languageLabel(SUBTITLE_LANGUAGE_OPTIONS, state.subtitleLanguagePreference)} • kõigil kanalitel"
+        AppSetting.LANGUAGES -> "Heli: ${languageLabel(AUDIO_LANGUAGE_OPTIONS, state.audioLanguagePreference)} • subtiitrid: ${languageLabel(SUBTITLE_LANGUAGE_OPTIONS, state.subtitleLanguagePreference)}"
         AppSetting.DISPLAY ->
             "Kell ${if (state.showClock) "sees" else "väljas"} • info ${state.channelInfoSeconds} s • kerimine ${state.seekStepSeconds} s"
-        AppSetting.WEATHER -> state.weather.location.let { "${it.name}${it.area?.let { area -> " • $area" }.orEmpty()}" }
-        AppSetting.TRANSIT -> "${state.transit.stop.name} • ${state.transit.stop.platforms.joinToString { it.code }}"
+        AppSetting.LOCATIONS -> "Ilm: ${state.weather.location.name} • peatus: ${state.transit.stop.name} • mereilm"
         AppSetting.REFRESH_PACKAGE -> "Kontrolli Go3 tellimust ja peidetud kanaleid uuesti"
     }
     val rows = AppSetting.entries
@@ -1090,9 +1078,9 @@ private fun AppSettingsOverlay(state: TvUiState) {
     }
     Box(Modifier.fillMaxSize().background(Go3Colors.Scrim), contentAlignment = Alignment.CenterStart) {
         Column(
-            Modifier.fillMaxHeight().width(760.dp)
+            Modifier.fillMaxHeight().width(680.dp)
                 .background(Go3Brushes.settingsPanel)
-                .padding(horizontal = 44.dp, vertical = 28.dp),
+                .padding(horizontal = 28.dp, vertical = 20.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Box(Modifier.fillMaxWidth()) {
@@ -1108,19 +1096,19 @@ private fun AppSettingsOverlay(state: TvUiState) {
                     fontSize = 12.sp,
                 )
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(2.dp))
             LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 state = listState,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
                 contentPadding = PaddingValues(bottom = 14.dp),
             ) {
                 itemsIndexed(rows) { index, setting ->
                     val selected = index == state.appSettingsIndex
-                    SettingsRow(selected, verticalPadding = 11.dp) {
+                    SettingsRow(selected, verticalPadding = 8.dp) {
                         Column(Modifier.weight(1f)) {
-                            Text(setting.title, color = Color.White, fontSize = 20.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold)
-                            Text(subtitle(setting), color = if (selected) Color.White else Go3Colors.TextSecondary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(setting.title, color = Color.White, fontSize = 18.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold)
+                            Text(subtitle(setting), color = if (selected) Color.White else Go3Colors.TextSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         Text("›", color = if (selected) Color.White else Go3Colors.TextFaint, fontSize = 30.sp)
                     }
@@ -1133,7 +1121,7 @@ private fun AppSettingsOverlay(state: TvUiState) {
 private fun DisplaySettingsOverlay(state: TvUiState) {
     CenteredMenuPanel(width = 760.dp) {
         OverlayHeader(
-            "EKRAAN JA JUHTIMINE",
+            "VAATAMISE EELISTUSED",
             "Vaatamisvaate eelistused",
             "Sinine nupp lülitab kella ka otse täisekraanvaates",
             keyHints = listOf("◀▶" to "muuda", "OK" to "muuda", "BACK" to "tagasi"),
@@ -2280,29 +2268,6 @@ private fun ProfileAvatar(profile: Profile, selected: Boolean, size: androidx.co
             fontSize = 22.sp,
             fontWeight = FontWeight.Bold,
         )
-    }
-}
-
-@Composable
-private fun LanguageSettingsOverlay(
-    title: String,
-    description: String,
-    options: List<Pair<String?, String>>,
-    selectedIndex: Int,
-    activeLanguage: String?,
-) {
-    CenteredMenuPanel {
-        OverlayHeader(title, hint = description)
-        Spacer(Modifier.height(6.dp))
-        options.forEachIndexed { index, (language, label) ->
-            val selected = index == selectedIndex
-            val active = language == activeLanguage
-            SettingsRow(selected, verticalPadding = 15.dp) {
-                Text(label, color = Color.White, fontSize = 21.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f))
-                if (active) RowBadge("EELISTATUD", selected)
-            }
-        }
-        KeyHintRow("▲▼" to "vali", "OK" to "kinnita", "BACK" to "sulge", modifier = Modifier.align(Alignment.End))
     }
 }
 

@@ -21,6 +21,24 @@ class IlmateenistusGatewayTest {
 
     @After fun tearDown() = server.shutdown()
 
+    @Test fun stationPickerLoadsExactNamesAndSkipsInvalidCoordinates() = runTest {
+        server.enqueue(MockResponse().setBody("""
+            <observations>
+              <station><name>Tilgu</name><latitude>59.45</latitude><longitude>24.48</longitude><watertemperature>16</watertemperature></station>
+              <station><name>Naissaare</name><latitude>59.54</latitude><longitude>24.56</longitude><windspeed>0</windspeed></station>
+              <station><name>Puuduv</name><latitude></latitude><longitude>24</longitude></station>
+              <station><name>Vigane</name><latitude>100</latitude><longitude>24</longitude></station>
+              <station><name>Tilgu</name><latitude>59.45</latitude><longitude>24.48</longitude><windspeed>2</windspeed></station>
+              <station><name>Tooma kaev</name><latitude>58.87</latitude><longitude>26.26</longitude><windspeed></windspeed></station>
+            </observations>
+        """.trimIndent()))
+        val gateway = IlmateenistusGateway(client = OkHttpClient(), observationsUrl = server.url("/observations.php").toString())
+        val stations = gateway.stations()
+        assertEquals(listOf("Naissaare", "Tilgu"), stations.map { it.stationName })
+        assertEquals(59.45, stations.last().latitude, 0.0001)
+        assertEquals(24.48, stations.last().longitude, 0.0001)
+    }
+
     @Test fun parsesRequestedStationsAndSkipsEmptyFields() = runTest {
         server.enqueue(MockResponse().setBody(XML))
         val gateway = IlmateenistusGateway(client = OkHttpClient(), observationsUrl = server.url("/observations.php").toString())

@@ -1,6 +1,7 @@
 package ee.local.go3tvplus.data
 
 import ee.local.go3tvplus.domain.StationObservation
+import ee.local.go3tvplus.domain.SeaPoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -21,19 +22,44 @@ class IlmateenistusGateway(
         .build(),
     private val observationsUrl: String = "https://www.ilmateenistus.ee/ilma_andmed/xml/observations.php",
 ) {
-    suspend fun observations(stationNames: Set<String>): Map<String, StationObservation> = withContext(Dispatchers.IO) {
+    suspend fun observations(stationNames: Set<String>): Map<String, StationObservation> =
+        withContext(Dispatchers.IO) { parse(fetchXml(), stationNames) }
+
+    suspend fun stations(): List<SeaPoint> =
+        withContext(Dispatchers.IO) { parseStations(fetchXml()) }
+
+    private fun fetchXml(): String {
         val request = Request.Builder().url(observationsUrl).header("Accept", "application/xml").build()
         val body = client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("Ilmateenistus vastas HTTP ${response.code}")
             response.body.string()
         }
-        parse(body, stationNames)
+        return body
     }
 
+    /** Use the service's station names verbatim so observation lookup stays exact. */
+    internal fun parseStations(xml: String): List<SeaPoint> {
+        val nodes = document(xml).documentElement.getElementsByTagName("station")
+        return (0 until nodes.length).mapNotNull { index ->
+            val station = nodes.item(index) as? Element ?: return@mapNotNull null
+            val name = station.text("name") ?: return@mapNotNull null
+            // Groundwater wells are also in this feed, but are not useful marine observation points.
+            if (station.text("windspeed")?.toDoubleOrNull() == null &&
+                station.text("watertemperature")?.toDoubleOrNull() == null
+            ) return@mapNotNull null
+            val latitude = station.text("latitude")?.toDoubleOrNull() ?: return@mapNotNull null
+            val longitude = station.text("longitude")?.toDoubleOrNull() ?: return@mapNotNull null
+            if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) return@mapNotNull null
+            SeaPoint(name, name, latitude, longitude)
+        }.distinctBy(SeaPoint::stationName).sortedBy(SeaPoint::name)
+    }
+
+    private fun document(xml: String) = runCatching {
+        DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(InputSource(StringReader(xml)))
+    }.getOrElse { throw IOException("Ilmateenistuse vastus ei olnud loetav", it) }
+
     internal fun parse(xml: String, stationNames: Set<String>): Map<String, StationObservation> {
-        val document = runCatching {
-            DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(InputSource(StringReader(xml)))
-        }.getOrElse { throw IOException("Ilmateenistuse vastus ei olnud loetav", it) }
+        val document = document(xml)
         val root = document.documentElement
         val observedAt = root.getAttribute("timestamp").toLongOrNull()?.let(Instant::ofEpochSecond) ?: Instant.now()
         val stations = root.getElementsByTagName("station")

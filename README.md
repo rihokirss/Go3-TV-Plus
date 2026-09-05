@@ -106,7 +106,19 @@ Parooli rakendusse ei sisestata ega salvestata. Tokenid hoitakse Android Keystor
 | `HOME` | Peata taasesitus ja sulge Go3 serveriseanss |
 
 Ilmateate vaikimisi asukoht on Suurupi. Seda saab muuta menüüst
-`Seaded → Ilm`; asukoha otsing ja prognoos kasutavad Open-Meteo teenust.
+`Seaded → Asukohad → Ilmateate asukoht`; asukoha otsing ja prognoos kasutavad Open-Meteo teenust.
+
+Menüüs **Heli ja subtiitrid** valib üles/alla nool rea ning vasak/parem muudab
+keele-eelistust kohe. Valik salvestatakse automaatselt; subtiitrite valik „Väljas”
+lülitab need välja.
+
+**Asukohad** koondab ilma asukoha, bussipeatuse ja mereilma punktid. Mereilmas
+saab valida kaks Ilmateenistuse mõõtejaama. Prognoosipunkti saab vasaku/parema
+noolega määrata nende vahele või ühe jaama juurde. Mõõtmised tulevad valitud
+jaamadest; tuule ja nähtavuse prognoos valitud koordinaatidelt ning laineprognoos
+lähimast merevõrgu punktist. Jaamade saadaolevad näitajad võivad erineda.
+Asukohad salvestatakse eraldi igasse telerisse. BACK viib alati ühe taseme tagasi,
+jättes fookuse samale seadereale.
 
 ## TCL-i Prime Video ja Sony Netflixi nupp
 

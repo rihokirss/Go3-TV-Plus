@@ -13,6 +13,8 @@ import ee.local.go3tvplus.domain.TransitStopSelection
 import ee.local.go3tvplus.domain.WeatherForecast
 import ee.local.go3tvplus.domain.WeatherLocation
 import java.time.Instant
+import ee.local.go3tvplus.domain.SeaLocationPreferences
+import ee.local.go3tvplus.domain.SeaPoint
 
 /**
  * [returnsToParent] — BACK sellelt overlay'lt naaseb [TvUiState.settingsReturnOverlay]
@@ -20,22 +22,39 @@ import java.time.Instant
  */
 enum class Overlay(val returnsToParent: Boolean = false) {
     NONE, CHANNEL_RAIL, GUIDE, APP_SETTINGS,
-    CHANNEL_SETTINGS(true), PROFILE_SETTINGS(true), AUDIO_SETTINGS(true),
-    SUBTITLE_SETTINGS(true), DISPLAY_SETTINGS(true), WEATHER_LOCATION(true),
+    CHANNEL_SETTINGS(true), PROFILE_SETTINGS(true), LANGUAGE_SETTINGS(true),
+    LOCATIONS_SETTINGS(true), SEA_SETTINGS(true), SEA_STATION_PICKER(true),
+    DISPLAY_SETTINGS(true), WEATHER_LOCATION(true),
     WEATHER(true), TRANSIT_STOP_SETTINGS(true), TRANSIT(true), TONIGHT(true), SEEK,
 }
 
 /** Seadete pealoendi read; järjekord on ka menüü järjekord. */
 enum class AppSetting(val title: String) {
-    PROFILE("Go3 profiil"),
     CHANNELS("Kanalid"),
-    AUDIO("Helirada"),
-    SUBTITLES("Subtiitrid"),
-    DISPLAY("Ekraan ja juhtimine"),
-    WEATHER("Ilm"),
-    TRANSIT("Bussipeatus"),
+    LANGUAGES("Heli ja subtiitrid"),
+    DISPLAY("Vaatamise eelistused"),
+    LOCATIONS("Asukohad"),
+    PROFILE("Go3 profiil"),
     REFRESH_PACKAGE("Värskenda kanalipaketti"),
 }
+
+enum class LocationSetting(val title: String) {
+    WEATHER("Ilmateate asukoht"), TRANSIT("Bussipeatus"), SEA("Mereilma punktid"),
+}
+
+enum class LanguageSetting(val title: String) {
+    AUDIO("Heli keel"), SUBTITLE("Subtiitrid"),
+}
+
+data class SeaSettingsState(
+    val preferences: SeaLocationPreferences = SeaLocationPreferences(),
+    val menuIndex: Int = 0,
+    val editingSecond: Boolean = false,
+    val stations: List<SeaPoint> = emptyList(),
+    val stationIndex: Int = 0,
+    val loading: Boolean = false,
+    val error: String? = null,
+)
 
 /** Ekraaniseaded koos lubatud väärtustega; [options] on tühi lülitite puhul. */
 enum class DisplaySetting(
@@ -160,6 +179,8 @@ data class TvUiState(
     val seekOverlaySeconds: Int = 10,
     val seekStepSeconds: Int = 10,
     val weather: WeatherState = WeatherState(),
+    val locationsIndex: Int = 0,
+    val seaSettings: SeaSettingsState = SeaSettingsState(),
     val transit: TransitState = TransitState(),
     val tonight: TonightState = TonightState(),
     val favoriteChannelIds: Set<String> = emptySet(),
