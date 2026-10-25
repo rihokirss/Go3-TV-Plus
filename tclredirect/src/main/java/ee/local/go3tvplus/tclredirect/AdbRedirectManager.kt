@@ -27,8 +27,11 @@ class AdbRedirectManager(context: Context) {
         val result = withAdb(authorizationTimeoutSeconds) { connection ->
             runShell(connection, bootstrapCommand())
         }
+        if (result.lineSequence().none { it == "STARTED" || it == "ALREADY_RUNNING" }) {
+            throw IOException("Nupukuulaja käivitamist ei õnnestunud kinnitada")
+        }
         preferences.edit().putBoolean(KEY_CONFIGURED, true).apply()
-        return result.ifBlank { "READY" }
+        return result
     }
 
     @Synchronized
@@ -107,7 +110,9 @@ class AdbRedirectManager(context: Context) {
             }
             append("if [ -r '$REMOTE_PID' ]; then ")
             append("pid=\$(cat '$REMOTE_PID'); ")
-            append("if kill -0 \"\$pid\" >/dev/null 2>&1; then ")
+            append("if kill -0 \"\$pid\" >/dev/null 2>&1 && ")
+            append("grep -q '^# go3-listener-hotplug-v2\$' '$REMOTE_SCRIPT' && ")
+            append("ps -A -o PPID,NAME | awk -v parent=\"\$pid\" '\$1 == parent && \$2 == \"getevent\" { found=1 } END { exit !found }'; then ")
             append(disableCompetingAppCommand())
             append("echo ALREADY_RUNNING; exit 0; fi; fi; ")
             append(stopCommand(restoreCompetingApp = false, printResult = false))
@@ -153,9 +158,12 @@ class AdbRedirectManager(context: Context) {
         }
         return """
             #!/system/bin/sh
+            # go3-listener-hotplug-v2
             echo "${dollar}${dollar}" > "$REMOTE_PID"
             trap 'rm -f "$REMOTE_PID"' EXIT
             while true; do
+              # No fixed event path: getevent watches /dev/input for removed/new devices.
+              # A Bluetooth reconnect can reuse event4 with a different underlying inode.
               getevent -lt 2>/dev/null | while IFS= read -r line; do
                 case "${dollar}line" in
                   $keyMatch)

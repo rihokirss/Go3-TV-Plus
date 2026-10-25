@@ -1,6 +1,8 @@
 package ee.local.go3tvplus.tclredirect
 
 import android.app.Activity
+import android.content.Intent
+import android.provider.Settings
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -34,6 +36,9 @@ class SetupActivity : Activity() {
             getString(R.string.status_configured)
         } else {
             getString(R.string.status_ready)
+        }
+        if (profile.usesSystemAccessibilitySettings) {
+            status.text = "Luba Androidi juurdepääsetavuse seadetes Go3 Air nupusuunaja. Algse nupu taastamiseks lülita sama teenus välja. Netflix jääb alles."
         }
         startButton.requestFocus()
     }
@@ -92,6 +97,7 @@ class SetupActivity : Activity() {
             gravity = Gravity.START
         }
         startButton = actionButton(getString(R.string.action_setup)).apply {
+            if (profile.usesSystemAccessibilitySettings) text = "Ava juurdepääsetavus"
             setOnClickListener { startRedirect() }
         }
         restoreButton = actionButton(getString(R.string.action_restore)).apply {
@@ -128,6 +134,10 @@ class SetupActivity : Activity() {
     }
 
     private fun startRedirect() {
+        if (profile.usesSystemAccessibilitySettings) {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            return
+        }
         setBusy(true, getString(R.string.status_connecting))
         executor.execute {
             val result = runCatching { AdbRedirectManager(this).ensureRedirect(90) }
@@ -144,6 +154,10 @@ class SetupActivity : Activity() {
     }
 
     private fun restoreRedirect() {
+        if (profile.usesSystemAccessibilitySettings) {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            return
+        }
         setBusy(true, getString(R.string.status_restoring, profile.deviceName, profile.sourceButtonName))
         executor.execute {
             val result = runCatching { AdbRedirectManager(this).restoreOriginalButton(20) }

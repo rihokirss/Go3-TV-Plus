@@ -10,6 +10,9 @@ data class RedirectProfile(
     val competingPackage: String,
     val usesTclAutoStart: Boolean,
 ) {
+    val usesSystemAccessibilitySettings: Boolean
+        get() = deviceName == "Chromecast"
+
     val title: String
         get() = "$deviceName $sourceButtonName-nupu suunaja"
 
@@ -19,7 +22,16 @@ data class RedirectProfile(
     companion object {
         fun current(): RedirectProfile {
             val manufacturer = Build.MANUFACTURER.orEmpty().lowercase()
-            return if (manufacturer.contains("sony")) {
+            return if (Build.DEVICE in setOf("boreal", "sabrina")) {
+                RedirectProfile(
+                    deviceName = "Chromecast",
+                    sourceButtonName = "Netflixi",
+                    rawKeyCode = "00f0",
+                    symbolicKeyCode = "KEY_UNKNOWN",
+                    competingPackage = "com.netflix.ninja",
+                    usesTclAutoStart = false,
+                )
+            } else if (manufacturer.contains("sony")) {
                 RedirectProfile(
                     deviceName = "Sony",
                     sourceButtonName = "Netflixi",

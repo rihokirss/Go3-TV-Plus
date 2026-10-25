@@ -10,8 +10,8 @@ android {
         applicationId = "ee.local.go3tvplus.tclredirect"
         minSdk = 28
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 4
+        versionName = "1.2.1-preview"
     }
 
     buildTypes {

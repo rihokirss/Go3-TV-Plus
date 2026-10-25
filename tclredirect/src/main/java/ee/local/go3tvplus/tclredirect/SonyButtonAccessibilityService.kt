@@ -15,12 +15,19 @@ class SonyButtonAccessibilityService : AccessibilityService() {
             flags = flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
             eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
         }
-        Log.i(TAG, "Sony button filter connected")
+        Log.i(TAG, "Netflix button filter connected")
     }
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
-        if (!Build.MANUFACTURER.orEmpty().contains("sony", ignoreCase = true)) return false
-        if (event.keyCode != KeyEvent.KEYCODE_BUTTON_4) return false
+        val matches = if (Build.DEVICE in setOf("boreal", "sabrina")) {
+            // Chromecast Remote Netflix: HID usage 0x000c0078 -> Linux KEY_UNKNOWN (240).
+            val device = event.device
+            event.scanCode == 240 && device?.vendorId == 0x18d1 && device.productId == 0x9450
+        } else {
+            Build.MANUFACTURER.orEmpty().contains("sony", ignoreCase = true) &&
+                event.keyCode == KeyEvent.KEYCODE_BUTTON_4
+        }
+        if (!matches) return false
 
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
             Log.i(TAG, "Netflix button intercepted; opening Go3 Air")

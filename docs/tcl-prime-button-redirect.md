@@ -1,4 +1,4 @@
-# TCL Prime Video and Sony Netflix button redirect
+# TCL Prime Video, Sony and Chromecast Netflix button redirect
 
 This note describes the device-specific workarounds that make the TCL Prime
 Video and Sony Netflix remote buttons launch Go3 Air. The helper is
@@ -125,6 +125,26 @@ I/Go3ButtonRedirect: Netflix button intercepted; opening Go3 Air
 mResumedActivity: ee.local.go3tvplus.debug/ee.local.go3tvplus.MainActivity
 ```
 
+## Chromecast Netflix button (physical press verified)
+
+On Chromecast HD (`boreal`, tested at `.138`), the original Chromecast Remote
+(`18d1:9450`) sends HID usage `000c0078` and Linux `KEY_UNKNOWN` (scan code 240)
+for Netflix. The helper's 1.2.0-preview accessibility filter matches that scan
+code only on the original remote, on `boreal` or `sabrina`. Other buttons and
+other input devices are passed through. Support on `sabrina` is not yet tested.
+
+The preview is installed on `.138`. On 2026-09-05 a physical Netflix press
+produced `Netflix button intercepted; opening Go3 Air`, and Android's resumed
+activity was `ee.local.go3tvplus.debug/ee.local.go3tvplus.MainActivity`. The user
+also confirmed that it worked. Netflix has NOT been disabled or removed.
+
+Unlike TCL's helper, this mode uses Android's persistent accessibility-service
+setting, with no local ADB listener or recovery job. Setup and restore open
+Android Accessibility settings: enable or disable **Go3 Air Netflixi
+nupusuunaja** there. A restart test is still pending. Before setup `.138` had
+no enabled accessibility services (`null`, `accessibility_enabled=0`). Setup
+preserved any existing entries while adding only the helper service.
+
 ## Restoring TCL's original behaviour
 
 Open the helper and choose **Taasta Prime-nupp**. This stops the listener,
@@ -140,6 +160,25 @@ adb -s <TCL_IP>:5555 shell \
 ```
 
 ## Known constraints
+
+### TCL reconnect failure and 1.2.1-preview fix (2026-09-05)
+
+TCL still had helper 1.0.0. Its live `getevent -lt /dev/input/event4`
+process held `/dev/input/event4 (deleted)` open, while a new remote device
+already existed at the same path. Its last recorded Prime press was September
+1. The periodic check only saw a live parent PID and therefore did not recover
+the stale listener. This was independent of updating the main Go3 Air APK.
+
+Installed helper 1.2.1-preview in place, preserving its authorized ADB key.
+The package-replacement job automatically migrated the legacy listener to
+`go3-button-redirect.sh`. The listener uses `getevent -lt` without a fixed
+device path, allowing getevent's inotify handling to follow device removal and
+addition. Bootstrap also checks the script revision and a live getevent child;
+an absent success marker is now a setup error instead of being silently accepted.
+The old listener was stopped; only its historical log was retained.
+
+Verified installation and automatic listener startup on TCL. Physical Prime
+press and remote disconnect/reconnect tests are still pending.
 
 - This is specific to the tested TCL remote and raw key code `02f0`.
 - Disabling network ADB prevents the helper from recreating the listener.
