@@ -77,6 +77,7 @@ data class SeaHour(
     val weatherCode: Int,
     val precipitationProbability: Int,
     val temperatureC: Double,
+    val isDay: Boolean? = null,
 )
 
 data class SeaForecast(

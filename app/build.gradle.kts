@@ -12,8 +12,8 @@ android {
         applicationId = "ee.local.go3tvplus"
         minSdk = 28
         targetSdk = 35
-        versionCode = 44
-        versionName = "0.4.34"
+        versionCode = 45
+        versionName = "0.4.35-weather-preview"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

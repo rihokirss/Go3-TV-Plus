@@ -32,6 +32,7 @@ data class HourlyWeather(
     val windGustMs: Double = 0.0,
     val windDirectionDegrees: Int = 0,
     val visibilityKm: Double? = null,
+    val isDay: Boolean? = null,
 )
 
 data class DailyWeather(
@@ -55,7 +56,7 @@ data class WeatherForecast(
 enum class WeatherGroup { CLEAR, CLOUDY, FOG, RAIN, SNOW, THUNDER }
 
 fun weatherGroup(code: Int): WeatherGroup = when {
-    code <= 1 -> WeatherGroup.CLEAR
+    code in 0..1 -> WeatherGroup.CLEAR
     code in 45..48 -> WeatherGroup.FOG
     code in 51..67 || code in 80..82 -> WeatherGroup.RAIN
     code in 71..77 || code in 85..86 -> WeatherGroup.SNOW

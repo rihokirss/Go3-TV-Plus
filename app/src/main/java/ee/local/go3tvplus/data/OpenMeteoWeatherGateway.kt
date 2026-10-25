@@ -77,7 +77,7 @@ class OpenMeteoWeatherGateway(
         val days = dates.indices.mapNotNull { index ->
             DailyWeather(
                 date = runCatching { LocalDate.parse(dates[index]) }.getOrNull() ?: return@mapNotNull null,
-                weatherCode = dailyCodes.getOrNull(index) ?: 0,
+                weatherCode = dailyCodes.getOrNull(index) ?: -1,
                 minimumTemperatureC = minimums.getOrNull(index) ?: return@mapNotNull null,
                 maximumTemperatureC = maximums.getOrNull(index) ?: return@mapNotNull null,
             )
@@ -89,7 +89,7 @@ class OpenMeteoWeatherGateway(
                 apparentTemperatureC = current.double("apparent_temperature") ?: 0.0,
                 humidityPercent = current.int("relative_humidity_2m") ?: 0,
                 precipitationMm = current.double("precipitation") ?: 0.0,
-                weatherCode = current.int("weather_code") ?: 0,
+                weatherCode = current.int("weather_code") ?: -1,
                 isDay = current.int("is_day") != 0,
                 windSpeedMs = current.double("wind_speed_10m") ?: 0.0,
                 windDirectionDegrees = current.int("wind_direction_10m") ?: 0,
@@ -129,6 +129,7 @@ class OpenMeteoWeatherGateway(
                 weatherCode = hour.weatherCode,
                 precipitationProbability = hour.precipitationProbability,
                 temperatureC = hour.temperatureC,
+                isDay = hour.isDay,
             )
         }
         val daily = forecastRoot.obj("daily")
@@ -174,16 +175,27 @@ class OpenMeteoWeatherGateway(
         val temperatures = hourly.doubleArray("temperature_2m")
         val precipitation = hourly.intArray("precipitation_probability")
         val codes = hourly.intArray("weather_code")
+        val daylight = hourly.intArray("is_day")
+        val sunrises = obj("daily")?.stringArray("sunrise").orEmpty().mapNotNull(::parseLocalDateTime).associateBy { it.toLocalDate() }
+        val sunsets = obj("daily")?.stringArray("sunset").orEmpty().mapNotNull(::parseLocalDateTime).associateBy { it.toLocalDate() }
         val windSpeeds = hourly.doubleArray("wind_speed_10m")
         val windGusts = hourly.doubleArray("wind_gusts_10m")
         val windDirections = hourly.intArray("wind_direction_10m")
         val visibilities = hourly.doubleArray("visibility")
         return times.indices.mapNotNull { index ->
+            val time = parseLocalDateTime(times[index]) ?: return@mapNotNull null
+            val sunrise = sunrises[time.toLocalDate()]
+            val sunset = sunsets[time.toLocalDate()]
             HourlyWeather(
-                time = parseLocalDateTime(times[index]) ?: return@mapNotNull null,
+                time = time,
                 temperatureC = temperatures.getOrNull(index) ?: return@mapNotNull null,
                 precipitationProbability = precipitation.getOrNull(index) ?: 0,
-                weatherCode = codes.getOrNull(index) ?: 0,
+                weatherCode = codes.getOrNull(index) ?: -1,
+                isDay = when (daylight.getOrNull(index)) {
+                    1 -> true
+                    0 -> false
+                    else -> if (sunrise != null && sunset != null) !time.isBefore(sunrise) && time.isBefore(sunset) else null
+                },
                 windSpeedMs = windSpeeds.getOrNull(index) ?: 0.0,
                 windGustMs = windGusts.getOrNull(index) ?: 0.0,
                 windDirectionDegrees = windDirections.getOrNull(index) ?: 0,
@@ -204,7 +216,7 @@ class OpenMeteoWeatherGateway(
     private companion object {
         const val CURRENT_VARIABLES = "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation," +
             "weather_code,is_day,wind_speed_10m,wind_direction_10m,wind_gusts_10m"
-        const val HOURLY_VARIABLES = "temperature_2m,precipitation_probability,weather_code," +
+        const val HOURLY_VARIABLES = "temperature_2m,precipitation_probability,weather_code,is_day," +
             "wind_speed_10m,wind_direction_10m,wind_gusts_10m,visibility"
         const val DAILY_VARIABLES = "weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset"
         const val MARINE_VARIABLES = "wave_height,wave_direction,wave_period,sea_surface_temperature"

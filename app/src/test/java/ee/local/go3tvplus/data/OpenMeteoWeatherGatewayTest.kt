@@ -76,6 +76,8 @@ class OpenMeteoWeatherGatewayTest {
         assertEquals(16.4, forecast.current.temperatureC, 0.01)
         assertEquals(4.3, forecast.current.windSpeedMs, 0.01)
         assertEquals(2, forecast.hours.size)
+        assertEquals(false, forecast.hours[0].isDay)
+        assertEquals(false, forecast.hours[1].isDay)
         assertEquals(55, forecast.hours[1].precipitationProbability)
         assertEquals(7.9, forecast.hours[1].windSpeedMs, 0.01)
         assertEquals(263, forecast.hours[1].windDirectionDegrees)
@@ -84,6 +86,30 @@ class OpenMeteoWeatherGatewayTest {
         assertEquals(18.9, forecast.days[1].maximumTemperatureC, 0.01)
         assertEquals("2026-08-31T20:28", forecast.sunset.toString())
         assertEquals("auto", server.takeRequest().requestUrl?.queryParameter("timezone"))
+    }
+
+    @Test fun daylightUsesServiceFlagAndFallsBackToTheCorrectDatesSunTimes() = runTest {
+        server.enqueue(MockResponse().setBody("""
+            {
+              "current": {"temperature_2m": 15},
+              "hourly": {
+                "time": ["2026-09-05T20:00", "2026-09-06T06:00", "2026-09-06T07:00", "2026-09-07T08:00"],
+                "temperature_2m": [15, 10, 12, 13],
+                "weather_code": [2, 2, null, 0],
+                "is_day": [0, null, null, null]
+              },
+              "daily": {
+                "time": ["2026-09-05", "2026-09-06"],
+                "sunrise": ["2026-09-05T05:00", "2026-09-06T06:30"],
+                "sunset": ["2026-09-05T21:00", "2026-09-06T20:00"]
+              }
+            }
+        """.trimIndent()))
+        val forecast = gateway.forecast(ee.local.go3tvplus.domain.DEFAULT_WEATHER_LOCATION)
+        assertEquals(listOf(false, false, true, null), forecast.hours.map { it.isDay })
+        assertEquals(-1, forecast.hours[2].weatherCode)
+        assertEquals(-1, forecast.current.weatherCode)
+        org.junit.Assert.assertTrue(server.takeRequest().requestUrl!!.queryParameter("hourly")!!.split(',').contains("is_day"))
     }
 
     @Test fun mergesMarineWavesIntoSeaForecastByHour() = runTest {
@@ -124,6 +150,8 @@ class OpenMeteoWeatherGatewayTest {
         val sea = gateway.seaForecast(ee.local.go3tvplus.domain.DEFAULT_SEA_ROUTE)
 
         assertEquals(2, sea.hours.size)
+        assertEquals(true, sea.hours[0].isDay)
+        assertEquals(false, sea.hours[1].isDay)
         assertEquals(0.44, sea.hours[1].waveHeightM!!, 0.01)
         assertEquals(2.75, sea.hours[1].wavePeriodS!!, 0.01)
         assertEquals(7.9, sea.hours[1].windSpeedMs, 0.01)

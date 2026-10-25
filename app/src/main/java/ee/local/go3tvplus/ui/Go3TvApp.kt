@@ -7,6 +7,12 @@ import android.graphics.RectF
 import android.text.TextPaint
 import android.text.TextUtils
 import android.view.KeyEvent
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -1338,6 +1344,15 @@ private fun ColumnScope.WeatherPageContent(weather: WeatherState) {
         return
     }
     WeatherCurrent(forecast)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("PRAEGU", color = Go3Colors.Cyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        forecast.sunrise?.let { Text("Päikesetõus ${it.format(WEATHER_HOUR_FORMAT)}", color = Go3Colors.TextSecondary, fontSize = 12.sp) }
+        forecast.sunset?.let { Text("Päikeseloojang ${it.format(WEATHER_HOUR_FORMAT)}", color = Go3Colors.TextSecondary, fontSize = 12.sp) }
+        if (weather.loading) Text("Värskendan…", color = Go3Colors.TextFaint, fontSize = 11.sp)
+    }
+    weather.error?.let {
+        Text("Värskendamine ebaõnnestus • näitan viimaseid andmeid. OK proovib uuesti.", color = Go3Colors.ErrorText, fontSize = 12.sp)
+    }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         WeatherMetric("TAJUTAV", formatTemperature(forecast.current.apparentTemperatureC), Modifier.weight(1f))
         WeatherMetric(
@@ -1354,6 +1369,7 @@ private fun ColumnScope.WeatherPageContent(weather: WeatherState) {
     val slots = remember(forecast) {
         ForecastSlots.select(forecast.hours, maxCount = 6, baseStepHours = 2, timeOf = HourlyWeather::time, notableChange = ForecastSlots::notableWeatherChange)
     }
+    Text("LÄHITUNNID", color = Go3Colors.TextFaint, fontSize = 11.sp, fontWeight = FontWeight.Bold)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         slots.forEach { hour ->
             Column(
@@ -1365,7 +1381,7 @@ private fun ColumnScope.WeatherPageContent(weather: WeatherState) {
             ) {
                 Text(hour.time.format(WEATHER_HOUR_FORMAT), color = Go3Colors.TextSecondary, fontSize = 13.sp)
                 Image(
-                    painter = painterResource(weatherKind(hour.weatherCode, isDay = hour.time.hour in 7..21).vectorRes),
+                    painter = painterResource(weatherKind(hour.weatherCode, isDay = hour.isDay).vectorRes),
                     contentDescription = weatherDescription(hour.weatherCode),
                     modifier = Modifier.size(42.dp),
                     colorFilter = ColorFilter.tint(Color.White),
@@ -1375,7 +1391,8 @@ private fun ColumnScope.WeatherPageContent(weather: WeatherState) {
                     WindArrow(hour.windDirectionDegrees, Modifier.size(13.dp), Go3Colors.TextSecondary)
                     Text("${hour.windSpeedMs.roundToInt()} m/s", color = Go3Colors.TextSecondary, fontSize = 12.sp)
                 }
-                Text("${hour.precipitationProbability}% sade", color = Go3Colors.Cyan, fontSize = 11.sp)
+                Text(weatherDescription(hour.weatherCode), color = Go3Colors.TextSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Saju võimalus ${hour.precipitationProbability}%", color = if (hour.precipitationProbability >= 50) Go3Colors.Cyan else Go3Colors.TextFaint, fontSize = 10.sp)
             }
         }
     }
@@ -1526,7 +1543,7 @@ private fun SeaHourCard(hour: SeaHour, modifier: Modifier = Modifier) {
         Text("${hour.windSpeedMs.roundToInt()} (${hour.windGustMs.roundToInt()}) m/s", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
         Text(hour.waveHeightM?.let { "${oneDecimal(it)} m" } ?: "– m", color = Go3Colors.Cyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         Image(
-            painter = painterResource(weatherKind(hour.weatherCode, isDay = hour.time.hour in 7..21).vectorRes),
+            painter = painterResource(weatherKind(hour.weatherCode, isDay = hour.isDay).vectorRes),
             contentDescription = weatherDescription(hour.weatherCode),
             modifier = Modifier.size(24.dp),
             colorFilter = ColorFilter.tint(Go3Colors.TextSecondary),
@@ -1574,7 +1591,7 @@ private fun WeatherCurrent(forecast: WeatherForecast) {
                 fontWeight = FontWeight.Bold,
             )
             Text(formatTemperature(current.temperatureC), color = Color.White, fontSize = 58.sp, fontWeight = FontWeight.Bold)
-            Text(weatherDescription(current.weatherCode), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+            Text(weatherDescription(current.weatherCode), color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, maxLines = 2)
             forecast.location.area?.let { Text(it, color = Go3Colors.TextSecondary, fontSize = 14.sp) }
         }
         Spacer(Modifier.width(18.dp))
@@ -1623,13 +1640,8 @@ private fun WeatherDailySummary(days: List<DailyWeather>, fetchedAt: Instant, mo
                         modifier = Modifier.size(35.dp),
                         colorFilter = ColorFilter.tint(Color.White),
                     )
-                    Text(
-                        "${formatTemperature(day.minimumTemperatureC)}  ${formatTemperature(day.maximumTemperatureC)}",
-                        color = Go3Colors.TextSecondary,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                    )
+                    Text("${formatTemperature(day.maximumTemperatureC)}", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text("min ${formatTemperature(day.minimumTemperatureC)}", color = Go3Colors.TextSecondary, fontSize = 11.sp, maxLines = 1)
                 }
             }
         }
@@ -2115,9 +2127,20 @@ private fun programProgress(program: Program, now: Instant): Float {
 
 @Composable
 private fun AnimatedWeatherIcon(code: Int, isDay: Boolean, modifier: Modifier = Modifier) {
-    val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(weatherKind(code, isDay).animationRes))
+    val kind = weatherKind(code, isDay)
+    val animationRes = kind.animationRes
+    if (animationRes == null) {
+        if (kind == WeatherKind.PARTLY_DAY || kind == WeatherKind.PARTLY_NIGHT) {
+            val motion = rememberInfiniteTransition(label = "weather-cloud")
+            val drift by motion.animateFloat(-2f, 2f, infiniteRepeatable(tween(3000), RepeatMode.Reverse), label = "cloud-drift")
+            Image(painterResource(kind.vectorRes), weatherDescription(code), modifier.graphicsLayer { translationY = drift })
+        } else Image(painterResource(kind.vectorRes), weatherDescription(code), modifier)
+        return
+    }
+    val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(animationRes))
     val progress by animateLottieCompositionAsState(composition, iterations = LottieConstants.IterateForever)
-    LottieAnimation(composition = composition, progress = { progress }, modifier = modifier)
+    if (composition == null) Image(painterResource(kind.vectorRes), weatherDescription(code), modifier)
+    else LottieAnimation(composition = composition, progress = { progress }, modifier = modifier)
 }
 
 @Composable
@@ -2135,7 +2158,7 @@ private fun WeatherMetric(label: String, value: String, modifier: Modifier = Mod
     }
 }
 /** Open-Meteo WMO koodid rühmitatuna ikoonideks; sama rühm annab nii vektori kui animatsiooni. */
-private enum class WeatherKind(val vectorRes: Int, val animationRes: Int) {
+internal enum class WeatherKind(val vectorRes: Int, val animationRes: Int?) {
     CLEAR_DAY(R.drawable.weather_clear_day, R.raw.weather_clear_day),
     CLEAR_NIGHT(R.drawable.weather_clear_night, R.raw.weather_clear_night),
     FOG(R.drawable.weather_fog, R.raw.weather_fog),
@@ -2143,15 +2166,20 @@ private enum class WeatherKind(val vectorRes: Int, val animationRes: Int) {
     SNOW(R.drawable.weather_snow, R.raw.weather_snow),
     THUNDERSTORMS(R.drawable.weather_thunderstorms, R.raw.weather_thunderstorms),
     CLOUDY(R.drawable.weather_cloudy, R.raw.weather_cloudy),
+    PARTLY_DAY(R.drawable.weather_partly_day, null),
+    PARTLY_NIGHT(R.drawable.weather_partly_night, null),
+    UNKNOWN(R.drawable.weather_unknown, null),
 }
 
-private fun weatherKind(code: Int, isDay: Boolean): WeatherKind = when (weatherGroup(code)) {
-    WeatherGroup.CLEAR -> if (isDay) WeatherKind.CLEAR_DAY else WeatherKind.CLEAR_NIGHT
-    WeatherGroup.FOG -> WeatherKind.FOG
-    WeatherGroup.RAIN -> WeatherKind.RAIN
-    WeatherGroup.SNOW -> WeatherKind.SNOW
-    WeatherGroup.THUNDER -> WeatherKind.THUNDERSTORMS
-    WeatherGroup.CLOUDY -> WeatherKind.CLOUDY
+internal fun weatherKind(code: Int, isDay: Boolean?): WeatherKind = when (code) {
+    0 -> when (isDay) { true -> WeatherKind.CLEAR_DAY; false -> WeatherKind.CLEAR_NIGHT; null -> WeatherKind.UNKNOWN }
+    1, 2 -> when (isDay) { true -> WeatherKind.PARTLY_DAY; false -> WeatherKind.PARTLY_NIGHT; null -> WeatherKind.CLOUDY }
+    3 -> WeatherKind.CLOUDY
+    45, 48 -> WeatherKind.FOG
+    51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82 -> WeatherKind.RAIN
+    71, 73, 75, 77, 85, 86 -> WeatherKind.SNOW
+    95, 96, 99 -> WeatherKind.THUNDERSTORMS
+    else -> WeatherKind.UNKNOWN
 }
 private fun weatherDescription(code: Int): String = when (code) {
     0 -> "Selge"
@@ -2159,13 +2187,22 @@ private fun weatherDescription(code: Int): String = when (code) {
     2 -> "Vahelduv pilvisus"
     3 -> "Pilvine"
     45, 48 -> "Udu"
-    in 51..57 -> "Uduvihm"
-    in 61..67 -> "Vihm"
-    in 71..77 -> "Lumesadu"
-    in 80..82 -> "Vihmahood"
+    51 -> "Nõrk uduvihm"
+    53, 55 -> "Uduvihm"
+    56, 57 -> "Jäätuv uduvihm"
+    61 -> "Nõrk vihm"
+    63 -> "Vihm"
+    65 -> "Tugev vihm"
+    66, 67 -> "Jäätuv vihm"
+    71 -> "Nõrk lumesadu"
+    73, 77 -> "Lumesadu"
+    75 -> "Tugev lumesadu"
+    80, 81 -> "Vihmahood"
+    82 -> "Tugevad vihmahood"
     85, 86 -> "Lumehood"
-    in 95..99 -> "Äike"
-    else -> "Muutlik ilm"
+    95 -> "Äike"
+    96, 99 -> "Äike ja rahe"
+    else -> "Ilmaolud teadmata"
 }
 
 private fun formatTemperature(value: Double) = "${value.roundToInt()}°"
