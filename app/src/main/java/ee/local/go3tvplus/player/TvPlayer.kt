@@ -6,11 +6,13 @@ import android.content.Context
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLivePlaybackSpeedControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.dash.DashMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
@@ -134,7 +136,12 @@ class TvPlayer(context: Context) {
                 }
             }
             .build()
-        player.setMediaSource(DefaultMediaSourceFactory(httpFactory).createMediaSource(mediaItem))
+        val mediaSourceFactory = if (ticket.mimeType == MimeTypes.APPLICATION_MPD) {
+            DashMediaSource.Factory(SubtitleTolerantDashChunkSourceFactory(httpFactory), httpFactory)
+        } else {
+            DefaultMediaSourceFactory(httpFactory)
+        }
+        player.setMediaSource(mediaSourceFactory.createMediaSource(mediaItem))
         player.prepare()
         player.playWhenReady = true
     }

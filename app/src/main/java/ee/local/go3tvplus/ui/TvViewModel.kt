@@ -1,5 +1,6 @@
 package ee.local.go3tvplus.ui
 
+import android.content.Context
 import android.view.KeyEvent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -2012,7 +2013,8 @@ class TvViewModel(
         }
     }
 
-    class Factory(private val container: AppContainer, private val player: TvPlayer) : ViewModelProvider.Factory {
+    /** Builds the player inside [create], so a recreated activity cannot start a second media session. */
+    class Factory(private val container: AppContainer, private val context: Context) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T = TvViewModel(
             container.auth,
@@ -2021,7 +2023,7 @@ class TvViewModel(
             container.weather,
             container.stations,
             container.transit,
-            player,
+            TvPlayer(context),
             container.isDemo,
         ) as T
     }

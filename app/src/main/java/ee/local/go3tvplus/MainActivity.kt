@@ -11,13 +11,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
-import ee.local.go3tvplus.player.TvPlayer
 import ee.local.go3tvplus.ui.Go3TvApp
 import ee.local.go3tvplus.ui.TvViewModel
 
 class MainActivity : ComponentActivity() {
     private val viewModel: TvViewModel by viewModels {
-        TvViewModel.Factory((application as TvApplication).container, TvPlayer(applicationContext))
+        TvViewModel.Factory((application as TvApplication).container, applicationContext)
     }
     private val screenOffReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -52,9 +51,11 @@ class MainActivity : ComponentActivity() {
         viewModel.onAppForegrounded()
     }
 
-    override fun onPause() {
+    // Stop only once hidden: system dialogs over the video and the button redirect's
+    // re-launch merely pause the activity, which used to drop and re-tune the stream.
+    override fun onStop() {
         viewModel.onAppBackgrounded()
-        super.onPause()
+        super.onStop()
     }
 
     override fun onDestroy() {
