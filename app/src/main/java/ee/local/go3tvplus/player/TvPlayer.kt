@@ -160,8 +160,8 @@ class TvPlayer(context: Context) {
         )
     }
 
-    fun togglePlayPause() {
-        if (player.playWhenReady) player.pause() else player.play()
+    fun setPlaying(playing: Boolean) {
+        if (playing) player.play() else player.pause()
     }
 
     /** [audioLanguage] "auto" jätab valiku mängijale; [subtitleLanguage] null lülitab subtiitrid välja. */

@@ -401,6 +401,10 @@ class TvViewModel(
             channelStep(if (event.keyCode == KeyEvent.KEYCODE_CHANNEL_UP) 1 else -1, immediate = true)
             return true
         }
+        if (event.keyCode in MEDIA_PLAYBACK_KEYS) {
+            if (event.repeatCount == 0) changePlayback(event.keyCode)
+            return true
+        }
         return when (current.overlay) {
             Overlay.GUIDE -> handleGuideKey(event.keyCode)
             Overlay.CHANNEL_RAIL -> handleRailKey(event.keyCode)
@@ -417,7 +421,7 @@ class TvViewModel(
             Overlay.TRANSIT_STOP_SETTINGS -> handleTransitStopSettingsKey(event.keyCode)
             Overlay.TRANSIT -> handleTransitKey(event.keyCode)
             Overlay.TONIGHT -> handleTonightKey(event.keyCode)
-            Overlay.SEEK -> handleSeekKey(event.keyCode)
+            Overlay.SEEK -> handleSeekKey(event.keyCode, event.repeatCount)
             Overlay.NONE -> handlePlayerKey(event.keyCode)
         }
     }
@@ -480,10 +484,6 @@ class TvViewModel(
             openSeekOverlay()
             true
         }
-        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-            tvPlayer.togglePlayPause()
-            true
-        }
         else -> false
     }
 
@@ -501,7 +501,7 @@ class TvViewModel(
         }
     }
 
-    private fun handleSeekKey(keyCode: Int): Boolean = when (keyCode) {
+    private fun handleSeekKey(keyCode: Int, repeatCount: Int): Boolean = when (keyCode) {
         KeyEvent.KEYCODE_DPAD_UP -> {
             startViewedProgramFromBeginning()
             true
@@ -519,13 +519,32 @@ class TvViewModel(
             scheduleSeekClose()
             true
         }
-        in CONFIRM_KEYS, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-            tvPlayer.togglePlayPause()
-            updateSeekState(tvPlayer.seekSnapshot(), Overlay.SEEK)
-            scheduleSeekClose()
+        in CONFIRM_KEYS -> {
+            if (repeatCount == 0) changePlayback(keyCode)
             true
         }
         else -> false
+    }
+
+    /**
+     * Play/pause from OK in the seek bar or a media key. Callers drop key repeats: a slow press
+     * used to toggle twice and leave playback paused.
+     */
+    private fun changePlayback(keyCode: Int) {
+        val playing = when (keyCode) {
+            KeyEvent.KEYCODE_MEDIA_PLAY -> true
+            KeyEvent.KEYCODE_MEDIA_PAUSE -> false
+            else -> !tvPlayer.seekSnapshot().isPlaying
+        }
+        tvPlayer.setPlaying(playing)
+        // A paused live stream falls behind on purpose; drift correction must not jump it to live.
+        if (!playing && tvPlayer.seekSnapshot().isLive) manuallyTimeShifted = true
+        if (snapshot.overlay == Overlay.SEEK) {
+            updateSeekState(tvPlayer.seekSnapshot())
+            scheduleSeekClose()
+        } else if (snapshot.overlay == Overlay.NONE) {
+            openSeekOverlay()
+        }
     }
 
     private fun startViewedProgramFromBeginning() {
@@ -585,7 +604,8 @@ class TvViewModel(
         seekCloseJob?.cancel()
         seekCloseJob = viewModelScope.launch {
             delay(snapshot.seekOverlaySeconds * 1_000L)
-            if (snapshot.overlay == Overlay.SEEK) {
+            // Stay open while paused, so OK resumes at once instead of only reopening the bar.
+            if (snapshot.overlay == Overlay.SEEK && tvPlayer.seekSnapshot().isPlaying) {
                 mutableState.update { it.copy(overlay = Overlay.NONE) }
                 seekUiJob?.cancel()
             }
@@ -2042,6 +2062,11 @@ private const val WAKE_GUIDE_REFRESH_DELAY_MS = 10_000L
 private val GUIDE_REFRESH_INTERVAL: Duration = Duration.ofHours(6)
 private val WEATHER_MAX_AGE: Duration = Duration.ofMinutes(15)
 private val CONFIRM_KEYS = setOf(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER)
+private val MEDIA_PLAYBACK_KEYS = setOf(
+    KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+    KeyEvent.KEYCODE_MEDIA_PLAY,
+    KeyEvent.KEYCODE_MEDIA_PAUSE,
+)
 private val PROGRAM_COLOR_KEYS = setOf(
     KeyEvent.KEYCODE_PROG_RED,
     KeyEvent.KEYCODE_PROG_GREEN,
