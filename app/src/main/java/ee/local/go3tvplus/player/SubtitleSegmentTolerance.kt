@@ -4,8 +4,10 @@ package ee.local.go3tvplus.player
 
 import android.net.Uri
 import android.util.Log
+import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.Format
+import androidx.media3.common.util.ExperimentalApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.HttpDataSource
@@ -38,11 +40,13 @@ class SubtitleTolerantDashChunkSourceFactory(dataSourceFactory: DataSource.Facto
         text.setSubtitleParserFactory(subtitleParserFactory)
     }
 
+    @OptIn(ExperimentalApi::class)
     override fun experimentalParseSubtitlesDuringExtraction(parseSubtitlesDuringExtraction: Boolean) = apply {
         media.experimentalParseSubtitlesDuringExtraction(parseSubtitlesDuringExtraction)
         text.experimentalParseSubtitlesDuringExtraction(parseSubtitlesDuringExtraction)
     }
 
+    @OptIn(ExperimentalApi::class)
     override fun experimentalSetCodecsToParseWithinGopSampleDependencies(
         codecsToParseWithinGopSampleDependencies: Int,
     ) = apply {
