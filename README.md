@@ -65,7 +65,7 @@ Luba teleris arendaja valikud ja Wireless debugging, ühenda arvuti teleriga nin
 
 ```bash
 adb connect TELERI_IP:ADB_PORT
-adb install -r Go3-Air-0.4.36.apk
+adb install -r Go3-Air-0.4.37.apk
 ```
 
 `-r` uuendab olemasolevat rakendust ja jätab sidumise ning seaded alles. Kui Android kuvab `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, on sama paketiga rakendus allkirjastatud teise võtmega. Vana rakenduse eemaldamine lahendab konflikti, kuid kustutab selle kohalikud seaded ja konto sidumise.
@@ -137,7 +137,18 @@ Paigaldamine, taastamine, turvapiirangud ja tehniline taust on kirjas
 
 Laadi uuem APK Releases-lehelt ja paigalda see vana peale. Rakendus asendatakse ning konto sidumine, lemmikud, kanalinumbrid ja muud eelistused jäävad alles, kui paketitunnus ja allkiri ühtivad.
 
-Rakendusel pole veel automaatset uuendajat ega Play Store'i versiooni.
+Alates versioonist 0.4.37 kontrollib rakendus käivitamisel kuni kord ööpäevas
+GitHubi uusimat stabiilset väljalaset. Uue versiooni teates saab valida
+**Uuenda** või **Hiljem**. Käsitsi saab kontrollida menüüst
+**Seaded → Rakenduse uuendused**. Kontrolli ebaõnnestumine ei sega vaatamist.
+
+Uuendaja laadib APK alla ning kontrollib selle kontrollsummat, paketitunnust,
+versiooni ja allkirja. Esimesel korral tuleb Androidi seadetes lubada Go3 Airil
+tundmatute rakenduste paigaldamine. Android küsib paigaldusele kinnitust;
+paigaldamise ajaks peatub taasesitus. Konto sidumine ja seaded jäävad alles.
+
+Versioonilt 0.4.36 või vanemalt tuleb uuendajaga APK üks kord käsitsi
+paigaldada. Edaspidi saab uuendada rakenduse seest. Play Store'i versiooni pole.
 
 ## Teadaolevad piirangud
 

@@ -35,6 +35,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel as CoroutineChannel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -43,6 +44,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -66,6 +68,8 @@ class TvViewModel(
     val mediaPlayer get() = tvPlayer.player
     private val mutableState = MutableStateFlow(TvUiState(auth = authCoordinator.state.value, isDemo = isDemo))
     val state: StateFlow<TvUiState> = mutableState.asStateFlow()
+    private val updateRequests = CoroutineChannel<Unit>(CoroutineChannel.CONFLATED)
+    val appUpdateRequests = updateRequests.receiveAsFlow()
     private val snapshot get() = mutableState.value
 
     private var digitJob: Job? = null
@@ -1016,6 +1020,7 @@ class TvViewModel(
                 mutableState.update { it.copy(locationsIndex = 0) }
             }
             AppSetting.REFRESH_PACKAGE -> refreshChannelPackage()
+            AppSetting.UPDATES -> updateRequests.trySend(Unit)
         }
     }
 

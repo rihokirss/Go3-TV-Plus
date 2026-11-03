@@ -36,6 +36,7 @@ enum class AppSetting(val title: String) {
     LOCATIONS("Asukohad"),
     PROFILE("Go3 profiil"),
     REFRESH_PACKAGE("Värskenda kanalipaketti"),
+    UPDATES("Rakenduse uuendused"),
 }
 
 enum class LocationSetting(val title: String) {

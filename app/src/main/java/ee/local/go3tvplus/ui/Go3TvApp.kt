@@ -1076,6 +1076,7 @@ private fun AppSettingsOverlay(state: TvUiState) {
             "Kell ${if (state.showClock) "sees" else "väljas"} • info ${state.channelInfoSeconds} s • kerimine ${state.seekStepSeconds} s"
         AppSetting.LOCATIONS -> "Ilm: ${state.weather.location.name} • peatus: ${state.transit.stop.name} • mereilm"
         AppSetting.REFRESH_PACKAGE -> "Kontrolli Go3 tellimust ja peidetud kanaleid uuesti"
+        AppSetting.UPDATES -> "Kontrolli Go3 Airi uut versiooni"
     }
     val rows = AppSetting.entries
     val listState = rememberLazyListState()
