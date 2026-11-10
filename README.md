@@ -10,6 +10,7 @@ Mitteametlik Android TV klient kiireks ja puldisõbralikuks Go3 otse-TV vaatamis
 - viimati vaadatud kanal avaneb automaatselt;
 - läbipaistev ja tihe EPG töötab mängiva video peal;
 - otse-TV ja Go3 pakutav järelvaatamine;
+- tulevaste saadete „Vaata kohe”, kui sama film on Go3 kataloogis või sama episood varasema eetrikorra salvestusena olemas;
 - kiire kanaliriba, lemmikud ning muudetavad kanalinumbrid;
 - kanalivahetus `CH+/CH−`, D-padi ja numbriklahvidega;
 - ajanihe, 10-sekundiline kerimine ja saatevahetuste markerid ajaribal;
@@ -65,7 +66,7 @@ Luba teleris arendaja valikud ja Wireless debugging, ühenda arvuti teleriga nin
 
 ```bash
 adb connect TELERI_IP:ADB_PORT
-adb install -r Go3-Air-0.4.37.apk
+adb install -r Go3-Air-0.4.38.apk
 ```
 
 `-r` uuendab olemasolevat rakendust ja jätab sidumise ning seaded alles. Kui Android kuvab `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, on sama paketiga rakendus allkirjastatud teise võtmega. Vana rakenduse eemaldamine lahendab konflikti, kuid kustutab selle kohalikud seaded ja konto sidumise.
@@ -104,6 +105,18 @@ Parooli rakendusse ei sisestata ega salvestata. Tokenid hoitakse Android Keystor
 | `0` eraldi | Vaheta eelmisele kanalile; korduv vajutus lülitab kahe viimase kanali vahel |
 | `BACK` | Sulge esmalt aktiivne kiht, seejärel rakendus |
 | `HOME` | Peata taasesitus ja sulge Go3 serveriseanss |
+
+Telekava avamisel kontrollib rakendus taustal nähtavate kuue kanali tulevasi
+saateid. Valge tasapinnaline **▶** saate lahtris näitab juba vaadatavat sisu;
+valitud saate juures kuvatakse **VAATA KOHE · OK**. Esimene kontroll võib
+oodata filmikataloogi laadimist; sama kataloogi kasutatakse 15 minutit ning
+leitud vasted salvestatakse ka rakenduse sulgemise järel. Teadaolevad märgid
+püsivad korduskontrolli ajal nähtaval; aegunud või uuesti kontrollides kadunud
+vaatamisvõimaluse märk eemaldatakse. Märge telekavas või „Täna õhtul” vaates avab
+kataloogifilmi või sama episoodi varasema salvestuse. Vaste leitakse Go3
+sisutunnuste järgi; ainult saate nimest ei piisa. Kataloogisarjade osi ei seota
+nime järgi automaatselt. Vaatamiseks peavad kehtima konto paketiõigused.
+Meeldetuletuse ja automaatlülituse saab endiselt lisada kollase ja sinise nupuga.
 
 Ilmateate vaikimisi asukoht on Suurupi. Seda saab muuta menüüst
 `Seaded → Asukohad → Ilmateate asukoht`; asukoha otsing ja prognoos kasutavad Open-Meteo teenust.

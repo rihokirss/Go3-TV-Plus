@@ -26,7 +26,7 @@ class TvApplication : Application() {
         val auth = AuthCoordinator(gateway, KeystoreTokenStore(this), scope)
         container = AppContainer(
             auth = auth,
-            repository = TvRepository(gateway, auth, AppDatabase.create(this)),
+            repository = TvRepository(gateway, auth, AppDatabase.create(this), scope),
             preferences = TvPreferences(this),
             weather = OpenMeteoWeatherGateway(),
             stations = IlmateenistusGateway(),

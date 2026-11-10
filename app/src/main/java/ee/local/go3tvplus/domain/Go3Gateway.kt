@@ -15,6 +15,9 @@ interface Go3Gateway {
     ): List<Program>
     suspend fun liveTicket(accessToken: String, profileId: String, channelId: String): PlaybackTicket
     suspend fun catchupTicket(accessToken: String, profileId: String, programId: String): PlaybackTicket
+    suspend fun movies(accessToken: String, profileId: String): List<CatalogMovie> = emptyList()
+    suspend fun movieTicket(accessToken: String, profileId: String, movieId: String): PlaybackTicket =
+        throw Go3Failure.Unavailable("Kataloogivideo pole saadaval")
     suspend fun prolongPlayback(accessToken: String, playbackSessionId: String)
     suspend fun closePlayback(accessToken: String, playbackSessionId: String)
 }

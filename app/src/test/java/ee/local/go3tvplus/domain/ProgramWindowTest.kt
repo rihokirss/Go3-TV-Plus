@@ -92,7 +92,7 @@ class ProgramWindowTest {
         )
     }
 
-    @Test fun guideWindowMovesInHalfHourStepsAfterSelectedProgramLeavesVisibleRange() {
+    @Test fun guideWindowMovesEnoughToShowTheWholeSelectedProgram() {
         val zone = ZoneId.of("Europe/Tallinn")
         val windowStart = ZonedDateTime.of(2026, 8, 30, 19, 0, 0, 0, zone).toInstant()
         val outsideProgram = program(
@@ -102,8 +102,48 @@ class ProgramWindowTest {
 
         val movedStart = ProgramWindow.guideWindowStartKeepingVisible(windowStart, outsideProgram)
 
-        assertEquals(19, movedStart.atZone(zone).hour)
-        assertEquals(30, movedStart.atZone(zone).minute)
+        assertEquals(20, movedStart.atZone(zone).hour)
+        assertEquals(0, movedStart.atZone(zone).minute)
+    }
+
+    @Test fun partlyVisibleRightEdgeProgramDoesNotRemainClipped() {
+        val start = Instant.parse("2026-11-10T19:00:00Z")
+        val selected = program(start.plusSeconds(3 * 3600 + 45 * 60), start.plusSeconds(4 * 3600 + 45 * 60))
+        val moved = ProgramWindow.guideWindowStartKeepingVisible(start, selected)
+        assertEquals(start.plusSeconds(3600), moved)
+        assertFalse(selected.startsAt.isBefore(moved))
+        assertFalse(selected.endsAt.isAfter(moved.plus(ProgramWindow.GUIDE_WINDOW_DURATION)))
+    }
+
+    @Test fun partlyVisibleLeftEdgeProgramKeepsItsTitleAndStartVisible() {
+        val start = Instant.parse("2026-11-10T19:00:00Z")
+        val selected = program(start.minusSeconds(900), start.plusSeconds(900))
+        assertEquals(start.minusSeconds(1800), ProgramWindow.guideWindowStartKeepingVisible(start, selected))
+    }
+
+    @Test fun longProgrammesAndAWeekJumpCannotPushTheTitleOutOfView() {
+        val start = Instant.parse("2026-11-10T19:00:00Z")
+        for (offset in listOf(-7 * 86400L + 13 * 60, -3600L, 3600L, 7 * 86400L + 13 * 60)) {
+            val selected = program(start.plusSeconds(offset), start.plusSeconds(offset + 6 * 3600))
+            val moved = ProgramWindow.guideWindowStartKeepingVisible(start, selected)
+            assertFalse(selected.startsAt.isBefore(moved))
+            assertTrue(selected.startsAt.isBefore(moved.plus(ProgramWindow.GUIDE_WINDOW_DURATION)))
+            assertEquals(0L, Duration.between(start, moved).seconds % 1800)
+        }
+    }
+
+    @Test fun sequentialRightAndLeftNavigationAlwaysShowsShortProgrammesInFull() {
+        val start = Instant.parse("2026-11-10T19:00:00Z")
+        val programs = (0..40).map { index ->
+            val since = start.plusSeconds(index * 2700L + 13 * 60)
+            program(since, since.plusSeconds(if (index % 3 == 0) 9000 else 2700))
+        }
+        var window = start
+        for (selected in programs + programs.reversed()) {
+            window = ProgramWindow.guideWindowStartKeepingVisible(window, selected)
+            assertFalse(selected.startsAt.isBefore(window))
+            assertFalse(selected.endsAt.isAfter(window.plus(ProgramWindow.GUIDE_WINDOW_DURATION)))
+        }
     }
 
     @Test fun programmeBoundariesArePositionedInsidePlaybackTimeline() {

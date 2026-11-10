@@ -6,6 +6,9 @@ import ee.local.go3tvplus.domain.DEFAULT_WEATHER_LOCATION
 import ee.local.go3tvplus.domain.DeviceAuthState
 import ee.local.go3tvplus.domain.Profile
 import ee.local.go3tvplus.domain.Program
+import ee.local.go3tvplus.domain.WatchNowSource
+import ee.local.go3tvplus.domain.WatchNowResolver
+import java.time.Duration
 import ee.local.go3tvplus.domain.SeaForecast
 import ee.local.go3tvplus.domain.TransitBoard
 import ee.local.go3tvplus.domain.TransitDeparture
@@ -26,6 +29,31 @@ enum class Overlay(val returnsToParent: Boolean = false) {
     LOCATIONS_SETTINGS(true), SEA_SETTINGS(true), SEA_STATION_PICKER(true),
     DISPLAY_SETTINGS(true), WEATHER_LOCATION(true),
     WEATHER(true), TRANSIT_STOP_SETTINGS(true), TRANSIT(true), TONIGHT(true), SEEK,
+}
+
+data class WatchNowState(
+    val program: Program? = null,
+    val checking: Boolean = false,
+    val failed: Boolean = false,
+    val sources: List<WatchNowSource> = emptyList(),
+    val checkedAt: Instant? = null,
+) {
+    fun isFresh(now: Instant): Boolean = checkedAt?.let {
+        Duration.between(it, now) in Duration.ZERO..(if (sources.isEmpty()) WatchNowResolver.EMPTY_CACHE_TTL else WatchNowResolver.CACHE_TTL)
+    } == true
+
+    fun availableFor(selected: Program?, now: Instant = Instant.now()): Boolean =
+        selected != null && selected.startsAt.isAfter(now) && WatchNowResolver.sameContent(program, selected) && sources.any {
+            when (it) {
+                is WatchNowSource.Recording -> it.program.catchupUntil?.isAfter(now) == true
+                is WatchNowSource.Movie -> !it.movie.availableFrom.isAfter(now) && it.movie.availableUntil?.isAfter(now) != false
+            }
+        }
+
+    /** A failed refresh must not erase a previously verified, still-valid source. */
+    fun refreshed(program: Program, sources: List<WatchNowSource>, at: Instant, failed: Boolean): WatchNowState =
+        if (failed && availableFor(program, at)) copy(program = program, checking = false, failed = true)
+        else WatchNowState(program, failed = failed, sources = sources, checkedAt = at)
 }
 
 /** Seadete pealoendi read; järjekord on ka menüü järjekord. */
@@ -188,6 +216,9 @@ data class TvUiState(
     val numberInput: String = "",
     /** Set while a catchup stream plays, so overlays show the right programme. */
     val catchupProgram: Program? = null,
+    val watchNowProfileId: String? = null,
+    val watchNowChannelIds: Set<String> = emptySet(),
+    val watchNowResults: Map<String, WatchNowState> = emptyMap(),
     val seek: SeekState = SeekState(),
     val loading: Boolean = false,
     val videoVisible: Boolean = false,
@@ -198,6 +229,26 @@ data class TvUiState(
     val notice: String? = null,
     val isDemo: Boolean = false,
 ) {
+    val selectedScheduleProgram: Program?
+        get() = when (overlay) {
+            Overlay.GUIDE -> programsFor(visibleChannels.getOrNull(guideChannelIndex)?.id).getOrNull(guideProgramIndex)
+            Overlay.TONIGHT -> tonight.entries.getOrNull(tonight.index)?.program
+            else -> null
+        }
+
+    val watchNow: WatchNowState get() = watchNowFor(selectedScheduleProgram)
+
+    fun watchNowFor(program: Program?, now: Instant = Instant.now()): WatchNowState {
+        if (program == null || !program.startsAt.isAfter(now)) return WatchNowState()
+        if (watchNowProfileId == selectedProfileId && watchNowChannelIds == channels.mapTo(mutableSetOf(), Channel::id)) {
+            watchNowResults[program.id]?.takeIf { WatchNowResolver.sameContent(it.program, program) }?.let {
+                if (it.isFresh(now) || it.availableFor(program, now))
+                    return it.copy(program = program, checking = !it.isFresh(now) && !it.failed)
+            }
+        }
+        return WatchNowState(program, checking = true)
+    }
+
     /** Kanalid, mida riba ja telekava parajasti näitavad: kas kõik või ainult lemmikud. */
     val visibleChannels: List<Channel>
         get() = if (favoritesOnly) channels.filter { it.id in favoriteChannelIds } else channels

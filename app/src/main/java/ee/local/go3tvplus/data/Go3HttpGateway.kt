@@ -7,6 +7,7 @@ import android.util.Log
 import ee.local.go3tvplus.BuildConfig
 import ee.local.go3tvplus.domain.AuthTokens
 import ee.local.go3tvplus.domain.Channel
+import ee.local.go3tvplus.domain.CatalogMovie
 import ee.local.go3tvplus.domain.DeviceCode
 import ee.local.go3tvplus.domain.Go3Failure
 import ee.local.go3tvplus.domain.Go3Gateway
@@ -14,6 +15,7 @@ import ee.local.go3tvplus.domain.PlaybackTicket
 import ee.local.go3tvplus.domain.Profile
 import ee.local.go3tvplus.domain.Program
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -295,6 +297,10 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
             startsAt = startsAt,
             endsAt = endsAt,
             catchupAvailable = instant("catchupTill")?.isAfter(Instant.now()) == true,
+            secondaryId = string("secondaryId"),
+            epgProvider = obj("live")?.string("epgProvider"),
+            originalTitle = string("originalTitle"),
+            catchupUntil = instant("catchupTill"),
         )
     }
 
@@ -309,6 +315,28 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
         profileId: String,
         programId: String,
     ): PlaybackTicket = playbackTicket(accessToken, profileId, programId, "CATCHUP", isLive = false)
+
+    override suspend fun movies(accessToken: String, profileId: String): List<CatalogMovie> {
+        val movies = mutableListOf<CatalogMovie>()
+        var offset = 0
+        // Keep a bound if the service stops honouring pagination.
+        repeat(20) {
+            val root = executeJson(request(
+                "products/vods", token = accessToken, profileId = profileId,
+                query = listOf("firstResult" to offset.toString(), "maxResults" to "2000", "tier" to tier),
+            )).jsonObject
+            val items = root.array("items")
+            movies += items.mapNotNull { (it as? JsonObject)?.toCatalogMovie() }
+            offset += items.size
+            val total = root.obj("meta")?.int("totalCount")
+                ?: throw Go3Failure.Unavailable("Go3 filmikataloogi maht puudub")
+            if (items.isEmpty() || offset >= total) return movies.distinctBy(CatalogMovie::id)
+        }
+        throw Go3Failure.Unavailable("Go3 filmikataloogi laadimine jäi pooleli")
+    }
+
+    override suspend fun movieTicket(accessToken: String, profileId: String, movieId: String): PlaybackTicket =
+        playbackTicket(accessToken, profileId, movieId, "MOVIE", isLive = false)
 
     override suspend fun prolongPlayback(accessToken: String, playbackSessionId: String) {
         executeEmpty(request("products/videosessions/$playbackSessionId", Method.PUT, token = accessToken))
@@ -333,25 +361,32 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
                 query = listOf("videoType" to videoType, "dai" to "true", "firstInSession" to "true"),
             ),
         ).jsonObject
-        val playlistUrl = configuration.string("playlistUrl")
-            ?: throw Go3Failure.Unavailable("Go3 ei tagastanud esitusloendit")
-        val playlist = executeJson(requestAbsolute(playlistUrl, token, profileId)).jsonObject
-        val sources = playlist.obj("sources") ?: throw Go3Failure.Unavailable("Go3 voog puudub")
-        val dashUrl = sources.firstSource("DASH") ?: sources.firstSource("DASH_HEVC")
-        val hlsUrl = sources.firstSource("HLS") ?: sources.firstSource("HLS_HEVC")
-        val manifest = dashUrl ?: hlsUrl ?: throw Go3Failure.Unavailable("Sobivat DASH/HLS voogu ei leitud")
-        val licenseUrl = playlist.obj("drm")?.obj("WIDEVINE")?.string("src")
         val session = configuration.obj("videoSession")
-        return PlaybackTicket(
-            contentId = productId,
-            manifestUrl = manifest.absoluteUrl(),
-            mimeType = if (dashUrl != null) "application/dash+xml" else "application/x-mpegURL",
-            licenseUrl = licenseUrl?.absoluteUrl(),
-            licenseRequestHeaders = licenseHeaders(token, profileId, licenseUrl),
-            playbackSessionId = session?.string("videoSessionId"),
-            prolongIntervalSeconds = session?.long("prolongInterval"),
-            isLive = isLive,
-        )
+        var handedOff = false
+        try {
+            val playlistUrl = configuration.string("playlistUrl")
+                ?: throw Go3Failure.Unavailable("Go3 ei tagastanud esitusloendit")
+            val playlist = executeJson(requestAbsolute(playlistUrl, token, profileId)).jsonObject
+            val sources = playlist.obj("sources") ?: throw Go3Failure.Unavailable("Go3 voog puudub")
+            val dashUrl = sources.firstSource("DASH") ?: sources.firstSource("DASH_HEVC")
+            val hlsUrl = sources.firstSource("HLS") ?: sources.firstSource("HLS_HEVC")
+            val manifest = dashUrl ?: hlsUrl ?: throw Go3Failure.Unavailable("Sobivat DASH/HLS voogu ei leitud")
+            val licenseUrl = playlist.obj("drm")?.obj("WIDEVINE")?.string("src")
+            return PlaybackTicket(
+                contentId = productId,
+                manifestUrl = manifest.absoluteUrl(),
+                mimeType = if (dashUrl != null) "application/dash+xml" else "application/x-mpegURL",
+                licenseUrl = licenseUrl?.absoluteUrl(),
+                licenseRequestHeaders = licenseHeaders(token, profileId, licenseUrl),
+                playbackSessionId = session?.string("videoSessionId"),
+                prolongIntervalSeconds = session?.long("prolongInterval"),
+                isLive = isLive,
+            ).also { handedOff = true }
+        } finally {
+            if (!handedOff) session?.string("videoSessionId")?.let { sessionId ->
+                withContext(NonCancellable) { runCatching { closePlayback(token, sessionId) } }
+            }
+        }
     }
 
     private fun requestAbsolute(url: String, token: String, profileId: String): Request {

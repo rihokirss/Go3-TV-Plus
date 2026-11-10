@@ -36,14 +36,20 @@ object ProgramWindow {
         currentWindowStart: Instant,
         program: Program,
     ): Instant {
+        if (!program.endsAt.isAfter(program.startsAt)) return currentWindowStart
         var windowStart = currentWindowStart
-        if (overlaps(program, windowStart, windowStart.plus(GUIDE_WINDOW_DURATION))) {
-            return windowStart
+        // Mere overlap can leave only a sliver of the selected cell at the edge.
+        // Reserve one grid step for alignment; unusually long programmes keep their title/start visible.
+        val visibleEnd = minOf(program.endsAt, program.startsAt.plus(GUIDE_WINDOW_DURATION.minus(GUIDE_WINDOW_STEP)))
+        val stepSeconds = GUIDE_WINDOW_STEP.seconds
+        fun stepsFor(duration: Duration): Long = duration.seconds / stepSeconds +
+            if (duration.seconds % stepSeconds != 0L || duration.nano != 0) 1 else 0
+        if (program.startsAt.isBefore(windowStart)) {
+            windowStart = windowStart.minus(GUIDE_WINDOW_STEP.multipliedBy(stepsFor(Duration.between(program.startsAt, windowStart))))
         }
-
-        val direction = if (!program.startsAt.isBefore(windowStart.plus(GUIDE_WINDOW_DURATION))) 1L else -1L
-        while (!overlaps(program, windowStart, windowStart.plus(GUIDE_WINDOW_DURATION))) {
-            windowStart = windowStart.plus(GUIDE_WINDOW_STEP.multipliedBy(direction))
+        val windowEnd = windowStart.plus(GUIDE_WINDOW_DURATION)
+        if (visibleEnd.isAfter(windowEnd)) {
+            windowStart = windowStart.plus(GUIDE_WINDOW_STEP.multipliedBy(stepsFor(Duration.between(windowEnd, visibleEnd))))
         }
         return windowStart
     }

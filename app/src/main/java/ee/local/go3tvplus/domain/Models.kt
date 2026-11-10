@@ -55,6 +55,10 @@ data class Program(
     val startsAt: Instant,
     val endsAt: Instant,
     val catchupAvailable: Boolean,
+    val secondaryId: String? = null,
+    val epgProvider: String? = null,
+    val originalTitle: String? = null,
+    val catchupUntil: Instant? = null,
 )
 
 data class PlaybackTicket(
