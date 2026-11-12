@@ -38,8 +38,9 @@ internal fun releaseVersion(value: String): List<Int>? {
 
 internal fun newerRelease(candidate: String, installed: String): Boolean {
     val next = releaseVersion(candidate) ?: return false
-    val current = releaseVersion(installed) ?: return false
-    return next.zip(current).firstOrNull { (a, b) -> a != b }?.let { (a, b) -> a > b } ?: false
+    val preview = installed.endsWith("-preview")
+    val current = releaseVersion(if (preview) installed.removeSuffix("-preview") else installed) ?: return false
+    return next.zip(current).firstOrNull { (a, b) -> a != b }?.let { (a, b) -> a > b } ?: preview
 }
 
 class GitHubUpdates(

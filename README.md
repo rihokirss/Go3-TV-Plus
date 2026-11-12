@@ -1,6 +1,6 @@
 # Go3 Air
 
-Mitteametlik Android TV klient kiireks ja puldisõbralikuks Go3 otse-TV vaatamiseks. Rakendus avab viimase kanali, hoiab video telekava all mängimas ning teeb kanalivahetuse võimalikuks nii D-padi, `CH+/CH−` kui ka numbriklahvidega.
+Mitteametlik Android TV klient kiireks ja puldisõbralikuks Go3 telekanalite, filmide ja seriaalide vaatamiseks. Rakendus avab viimase kanali, hoiab video telekava all mängimas ning teeb kanalivahetuse võimalikuks nii D-padi, `CH+/CH−` kui ka numbriklahvidega.
 
 > [!IMPORTANT]
 > See on sõltumatu kogukonnaprojekt, mitte Go3 ametlik rakendus. Go3 nimi ja teenus kuuluvad nende omanikele. Rakendus eeldab kasutaja enda kehtivat Go3 tellimust ning kasutab Go3 tavapärast seadmesidumist ja ametlikku DRM-litsentsivoogu. DRM-i ega teenuse piiranguid ei eemaldata.
@@ -10,7 +10,7 @@ Mitteametlik Android TV klient kiireks ja puldisõbralikuks Go3 otse-TV vaatamis
 - viimati vaadatud kanal avaneb automaatselt;
 - läbipaistev ja tihe EPG töötab mängiva video peal;
 - otse-TV ja Go3 pakutav järelvaatamine;
-- tulevaste saadete „Vaata kohe”, kui sama film on Go3 kataloogis või sama episood varasema eetrikorra salvestusena olemas;
+- eraldi filmide ja seriaalide kataloog, otsing, hooajad ja osad, Go3 profiiliga sünkroonitav vaatamisjärg ning kohalik nimekiri;
 - kiire kanaliriba, lemmikud ning muudetavad kanalinumbrid;
 - kanalivahetus `CH+/CH−`, D-padi ja numbriklahvidega;
 - ajanihe, 10-sekundiline kerimine ja saatevahetuste markerid ajaribal;
@@ -66,7 +66,7 @@ Luba teleris arendaja valikud ja Wireless debugging, ühenda arvuti teleriga nin
 
 ```bash
 adb connect TELERI_IP:ADB_PORT
-adb install -r Go3-Air-0.4.38.apk
+adb install -r Go3-Air-0.5.0.apk
 ```
 
 `-r` uuendab olemasolevat rakendust ja jätab sidumise ning seaded alles. Kui Android kuvab `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, on sama paketiga rakendus allkirjastatud teise võtmega. Vana rakenduse eemaldamine lahendab konflikti, kuid kustutab selle kohalikud seaded ja konto sidumise.
@@ -89,7 +89,7 @@ Parooli rakendusse ei sisestata ega salvestata. Tokenid hoitakse Android Keystor
 | `CH+ / CH−` | Vaheta kanal kohe ja näita kanaliriba |
 | `↑ / ↓` | Ava kanaliriba ja vali kanal |
 | `→` | Ava EPG; EPG-s liigu järgmise saate juurde |
-| `←` | Ava rakenduse seaded; EPG-s liigu eelmise saate juurde |
+| `←` | Ava peamenüü; EPG-s liigu eelmise saate juurde |
 | `OK` | Kinnita valik; mängijavaates ava ajariba |
 | Ajaribal `↑` | Alusta vaadatavat saadet algusest, kui järelvaatamine on saadaval |
 | Hoia EPG-s `OK` | Vaheta kõigi kanalite ja lemmikute filtrit |
@@ -106,17 +106,29 @@ Parooli rakendusse ei sisestata ega salvestata. Tokenid hoitakse Android Keystor
 | `BACK` | Sulge esmalt aktiivne kiht, seejärel rakendus |
 | `HOME` | Peata taasesitus ja sulge Go3 serveriseanss |
 
-Telekava avamisel kontrollib rakendus taustal nähtavate kuue kanali tulevasi
-saateid. Valge tasapinnaline **▶** saate lahtris näitab juba vaadatavat sisu;
-valitud saate juures kuvatakse **VAATA KOHE · OK**. Esimene kontroll võib
-oodata filmikataloogi laadimist; sama kataloogi kasutatakse 15 minutit ning
-leitud vasted salvestatakse ka rakenduse sulgemise järel. Teadaolevad märgid
-püsivad korduskontrolli ajal nähtaval; aegunud või uuesti kontrollides kadunud
-vaatamisvõimaluse märk eemaldatakse. Märge telekavas või „Täna õhtul” vaates avab
-kataloogifilmi või sama episoodi varasema salvestuse. Vaste leitakse Go3
-sisutunnuste järgi; ainult saate nimest ei piisa. Kataloogisarjade osi ei seota
-nime järgi automaatselt. Vaatamiseks peavad kehtima konto paketiõigused.
-Meeldetuletuse ja automaatlülituse saab endiselt lisada kollase ja sinise nupuga.
+Peamenüü avaneb vasaku noolega: **Televisioon, Filmid, Seriaalid, Otsing,
+Minu nimekiri, Seaded**. Filmide ja seriaalide valik avaneb kohalikust vahemälust
+ning värskeneb lehekaupa. TV jätkab sirvimise taga mängimist. Saatekava sisaldab
+tavapäraseid saateid ja järelvaatamist; tulevase saate meeldetuletuse või
+kanalile lülitumise saab lisada kollase ja sinise nupuga.
+
+Kataloogis kuvatakse vaikimisi konto paketti kuuluv sisu. **Kogu kataloog** näitab
+ka lukustatud ja kontrollimata õigusega teoseid eraldi tähisega. Otsing toetab
+pealkirja ja algpealkirja ning täpitähtedeta sisestust. Žanri-, aasta- ja liigifiltrid
+ning sortimine on saadaval ka „Vaata kõiki” ruudustikus.
+
+**Jätka vaatamist** sünkroonib edenemise valitud Go3 profiiliga mõlemas suunas.
+Võrguühenduseta muudatused säilivad teleris ja saadetakse ühenduse taastumisel.
+**Minu nimekiri** jääb selle teleri profiilipõhiseks nimekirjaks.
+Edenemine salvestatakse iga 10 sekundi järel ning pausil,
+kerimisel ja väljumisel. Vähemalt 95% läbimisel loetakse teos vaadatuks.
+Seriaali järgmise osa 10-sekundilise loenduse tühistab BACK; OK alustab kohe.
+Automaatse jätkamise saab välja lülitada menüüs **Seaded → Vaatamise eelistused**.
+Ostmist, laenutamist ega Go3 konto nimekirja muutmist ei lisata.
+
+Filmist või episoodist BACK taastab detailvaate ja TV-tausta. Kataloogi sirvimisel
+läheb BACK eelmisele vaatele; otsinguklaviatuuri sulgemine jätab kataloogi avatuks.
+Numbrid ja kanalivahetusnupud kataloogi taga TV kanalit ei vaheta.
 
 Ilmateate vaikimisi asukoht on Suurupi. Seda saab muuta menüüst
 `Seaded → Asukohad → Ilmateate asukoht`; asukoha otsing ja prognoos kasutavad Open-Meteo teenust.
@@ -194,7 +206,8 @@ Avaldatud versiooni allkirjavõtit repos ei hoita. Teise võtmega ehitatud APK e
 - `data/local/` — Roomi vahemälu, DataStore'i eelistused ja Android Keystore'iga kaitstud tokenid;
 - `player/TvPlayer.kt` — Media3 ExoPlayer, MediaSession ja ametlik DRM-voog;
 - `ui/TvViewModel.kt` — EPG, kanalite, puldi ja taasesituse olek;
-- `ui/Go3TvApp.kt` — Android TV kasutajaliides.
+- `ui/Go3TvApp.kt` — Android TV kasutajaliides;
+- `catalog/` — eraldi kataloogi olek, Room/FTS, profiilipõhine vaatamisjärg ja Coil-pildid; [andmelepingud](docs/catalog-contracts.md).
 
 Rakendus ei logi HTTP kehi, bearer-token'e ega DRM-päiseid. HAR-id, võtmed, APK-d ja lokaalsed captures-failid on Gitist välistatud. Täpsem info: [turvalisus](docs/SECURITY.md).
 

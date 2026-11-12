@@ -42,6 +42,13 @@ class GitHubUpdatesTest {
         assertFalse(newerRelease("v99999999999999.4.38", "0.4.37"))
     }
 
+    @Test fun previewCanUpgradeToTheMatchingOrNewerStableRelease() {
+        assertTrue(newerRelease("v0.5.0", "0.5.0-preview"))
+        assertTrue(newerRelease("v0.5.1", "0.5.0-preview"))
+        assertFalse(newerRelease("v0.4.38", "0.5.0-preview"))
+        assertFalse(newerRelease("v0.5.1-preview", "0.5.0-preview"))
+    }
+
     @Test fun acceptsStableReleaseAndIgnoresDraftPreviewAndInstalledVersions() {
         val release = parseRelease(metadata(), "0.4.36")!!
         assertEquals("0.4.37", release.version)

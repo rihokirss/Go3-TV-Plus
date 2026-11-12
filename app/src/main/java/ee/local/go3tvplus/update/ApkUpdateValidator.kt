@@ -9,9 +9,14 @@ import java.io.IOException
 /** The release metadata is not enough: trust only a newer APK signed by this app's own key. */
 internal fun verifyUpdateApk(context: Context, file: File, release: AppRelease) {
     val manager = context.packageManager
-    val archive = manager.getPackageArchiveInfo(file.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
+    // Sony Android 9 parses archives without signingInfo when only the new flag is
+    // present. Request both representations: the same device returns signingInfo
+    // correctly with these combined flags. Never accept an unsigned archive.
+    @Suppress("DEPRECATION")
+    val signingFlags = PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES
+    val archive = manager.getPackageArchiveInfo(file.absolutePath, signingFlags)
         ?: throw IOException("Allalaaditud fail ei ole sobiv Androidi rakendus.")
-    val installed = manager.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+    val installed = manager.getPackageInfo(context.packageName, signingFlags)
     validateUpdateIdentity(
         installed = ApkIdentity(installed.packageName, installed.longVersionCode, installed.versionName,
             installed.applicationInfo?.minSdkVersion ?: 0,

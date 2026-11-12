@@ -1,5 +1,6 @@
 package ee.local.go3tvplus.data
 
+import ee.local.go3tvplus.catalog.*
 import android.content.Context
 import android.os.Build
 import android.provider.Settings
@@ -7,7 +8,6 @@ import android.util.Log
 import ee.local.go3tvplus.BuildConfig
 import ee.local.go3tvplus.domain.AuthTokens
 import ee.local.go3tvplus.domain.Channel
-import ee.local.go3tvplus.domain.CatalogMovie
 import ee.local.go3tvplus.domain.DeviceCode
 import ee.local.go3tvplus.domain.Go3Failure
 import ee.local.go3tvplus.domain.Go3Gateway
@@ -23,6 +23,8 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
@@ -80,6 +82,8 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
         .followSslRedirects(true)
         .build()
 
+    private class ProfileSigningContext(val id: JsonElement, val name: String, val token: String)
+    private val profileSigning = ConcurrentHashMap<String, ProfileSigningContext>()
     @Volatile private var tier: String = "TIER_2"
     @Volatile private var channelIds: List<String> = emptyList()
     /** Vana programmiotspunkt vastab 404, kui see on välja lülitatud; jätame selle meelde, et mitte iga värskendusega uuesti proovida. */
@@ -126,6 +130,9 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
         return subscriber.array("profiles").mapNotNull { element ->
             val item = element as? JsonObject ?: return@mapNotNull null
             val id = item.string("uid") ?: item.string("id") ?: return@mapNotNull null
+            item.string("token")?.let { signingToken ->
+                profileSigning[id] = ProfileSigningContext(item["id"] ?: JsonPrimitive(id), item.string("name") ?: "Profiil", signingToken)
+            }
             Profile(
                 id = id,
                 name = item.string("name") ?: "Profiil",
@@ -316,27 +323,74 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
         programId: String,
     ): PlaybackTicket = playbackTicket(accessToken, profileId, programId, "CATCHUP", isLive = false)
 
-    override suspend fun movies(accessToken: String, profileId: String): List<CatalogMovie> {
-        val movies = mutableListOf<CatalogMovie>()
-        var offset = 0
-        // Keep a bound if the service stops honouring pagination.
-        repeat(20) {
-            val root = executeJson(request(
-                "products/vods", token = accessToken, profileId = profileId,
-                query = listOf("firstResult" to offset.toString(), "maxResults" to "2000", "tier" to tier),
-            )).jsonObject
-            val items = root.array("items")
-            movies += items.mapNotNull { (it as? JsonObject)?.toCatalogMovie() }
-            offset += items.size
-            val total = root.obj("meta")?.int("totalCount")
-                ?: throw Go3Failure.Unavailable("Go3 filmikataloogi maht puudub")
-            if (items.isEmpty() || offset >= total) return movies.distinctBy(CatalogMovie::id)
-        }
-        throw Go3Failure.Unavailable("Go3 filmikataloogi laadimine jäi pooleli")
-    }
-
     override suspend fun movieTicket(accessToken: String, profileId: String, movieId: String): PlaybackTicket =
         playbackTicket(accessToken, profileId, movieId, "MOVIE", isLive = false)
+
+    override suspend fun catalogPage(accessToken: String, profileId: String, offset: Int, limit: Int): CatalogPage {
+        val root = executeJson(request("products/vods", token = accessToken, profileId = profileId,
+            query = listOf("firstResult" to offset.toString(), "maxResults" to limit.toString(), "tier" to tier))).jsonObject
+        val raw = root.array("items")
+        return CatalogPage(raw.mapNotNull { it as? JsonObject }, root.obj("meta")?.int("totalCount")
+            ?: throw Go3Failure.Unavailable("Kataloogi maht puudub"), raw.size)
+    }
+
+    override suspend fun catalogDetail(accessToken: String, profileId: String, id: String): JsonObject =
+        executeJson(request("products/vods/$id", token = accessToken, profileId = profileId)).jsonObject
+
+    override suspend fun catalogSeasons(accessToken: String, profileId: String, seriesId: String): List<CatalogSeason> =
+        executeJson(request("products/vods/serials/$seriesId/seasons", token = accessToken, profileId = profileId,
+            query = listOf("tier" to tier))).asArray().mapNotNull {
+            val item = it as? JsonObject ?: return@mapNotNull null
+            CatalogSeason(item.string("id") ?: return@mapNotNull null, seriesId, item.int("number") ?: 0, item.string("title") ?: "Hooaeg")
+        }.sortedBy { it.number }
+
+    override suspend fun catalogEpisodes(accessToken: String, profileId: String, seriesId: String, seasonId: String): List<JsonObject> =
+        executeJson(request("products/vods/serials/$seriesId/seasons/$seasonId/episodes", token = accessToken, profileId = profileId,
+            query = listOf("tier" to tier))).asArray().mapNotNull { it as? JsonObject }
+
+    override suspend fun catalogRights(accessToken: String, profileId: String): CatalogRights {
+        val raw = executeRaw(request("subscribers/products/available/till", token = accessToken, profileId = profileId))
+        if (raw.code !in 200..299) throw failure(raw)
+        val rights = LinkedHashMap<String, Long?>()
+        // The list includes >100k TV recordings. Stream it to avoid building a huge JSON object tree.
+        try {
+            android.util.JsonReader(java.io.StringReader(raw.body)).use { reader ->
+                reader.beginArray()
+                while (reader.hasNext()) {
+                    var id: String? = null
+                    var till: Long? = null
+                    if (reader.peek() == android.util.JsonToken.BEGIN_OBJECT) {
+                        reader.beginObject()
+                        while (reader.hasNext()) {
+                            when (reader.nextName()) {
+                                "id" -> id = reader.nextString()
+                                "till" -> if (reader.peek() == android.util.JsonToken.NULL) reader.nextNull() else till = Instant.parse(reader.nextString()).toEpochMilli()
+                                else -> reader.skipValue()
+                            }
+                        }
+                        reader.endObject()
+                    } else id = reader.nextString()
+                    rights[id ?: throw IOException("Missing entitlement id")] = till
+                }
+                reader.endArray()
+            }
+        } catch (error: Exception) { throw Go3Failure.Unavailable("Vaatamisõiguste vastus ei ole sobiv", error) }
+        return CatalogRights(rights)
+    }
+
+    override suspend fun catalogHistory(accessToken: String, profileId: String): List<CatalogHistoryRecord> =
+        parseCatalogHistory(executeJson(request("subscribers/bookmarks/continue/watching", token = accessToken, profileId = profileId)).jsonObject)
+
+    override suspend fun saveCatalogHistory(accessToken: String, profileId: String, contentId: String, positionMs: Long) {
+        if (!profileSigning.containsKey(profileId)) profiles(accessToken)
+        val profile = profileSigning[profileId] ?: throw Go3Failure.Unavailable("Go3 profiili vaatamisjärge ei saanud salvestada")
+        val body = buildJsonObject {
+            put("itemId", contentId.toLongOrNull()?.let(::JsonPrimitive) ?: JsonPrimitive(contentId))
+            put("playTime", positionMs.coerceAtLeast(0) / 1000)
+            put("profile", buildJsonObject { put("id", profile.id); put("name", profile.name); put("token", profile.token) })
+        }.toString().toRequestBody(JSON_MEDIA_TYPE)
+        executeEmpty(request("int/subscribers/bookmarks", Method.POST, body, token = accessToken, profileId = profileId, query = listOf("type" to "WATCHED")))
+    }
 
     override suspend fun prolongPlayback(accessToken: String, playbackSessionId: String) {
         executeEmpty(request("products/videosessions/$playbackSessionId", Method.PUT, token = accessToken))

@@ -139,6 +139,7 @@ fun Go3TvApp(viewModel: TvViewModel, player: Player) {
                     onSearchInputKey = viewModel::handleFocusedSearchKey,
                 )
             }
+            ee.local.go3tvplus.catalog.CatalogOverlay(viewModel.catalog)
             if (state.isDemo) DemoBadge()
         }
     }
@@ -668,15 +669,6 @@ private fun GuideOverlay(state: TvUiState) {
     val visibleCount = ee.local.go3tvplus.domain.GuideViewport.CHANNEL_ROWS
     val first = ee.local.go3tvplus.domain.GuideViewport.firstChannelIndex(state.guideChannelIndex, guideChannels.size)
     val visibleChannels = guideChannels.drop(first).take(visibleCount)
-    val watchNowAvailableIds = remember(
-        state.watchNowResults, state.watchNowProfileId, state.watchNowChannelIds, state.selectedProfileId,
-        state.channels, guideChannels, state.programsByChannel, state.guideChannelIndex, windowStart, now,
-    ) {
-        ee.local.go3tvplus.domain.GuideViewport.upcomingPrograms(
-            guideChannels, state.programsByChannel, state.guideChannelIndex, windowStart, now,
-        ).filter { state.watchNowFor(it).availableFor(it) }.mapTo(mutableSetOf(), Program::id)
-    }
-
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
         Column(
             Modifier.fillMaxWidth().fillMaxHeight(0.82f)
@@ -776,7 +768,6 @@ private fun GuideOverlay(state: TvUiState) {
                         now = now,
                         scheduledReminderIds = state.scheduledReminderIds,
                         scheduledAutoTuneIds = state.scheduledAutoTuneIds,
-                        watchNowAvailableIds = watchNowAvailableIds,
                     )
                 }
                 if (offset < visibleChannels.lastIndex) {
@@ -805,14 +796,12 @@ private fun GuideOverlay(state: TvUiState) {
                         ProgramWindow.isCurrent(selectedProgram, now) -> "OTSE"
                         selectedProgram.endsAt.isBefore(now) && selectedProgram.catchupAvailable -> "JÄRELVAATAMINE"
                         selectedProgram.endsAt.isBefore(now) -> "LÕPPENUD"
-                        state.watchNow.availableFor(selectedProgram) -> "VAATA KOHE · OK"
-                        state.watchNow.program == selectedProgram && state.watchNow.checking -> "KONTROLLIN…"
                         else -> "TULEKUL"
                     }
                     Text(
                         status,
                         modifier = Modifier.padding(start = 14.dp).background(Go3Colors.StatusChip, RoundedCornerShape(Go3Radii.L)).padding(horizontal = 11.dp, vertical = 5.dp),
-                        color = if (status == "OTSE" || state.watchNow.availableFor(selectedProgram)) Go3Colors.Cyan else Go3Colors.TextSecondary,
+                        color = if (status == "OTSE") Go3Colors.Cyan else Go3Colors.TextSecondary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                     )
@@ -839,25 +828,10 @@ private fun GuideLegend(reminderActive: Boolean, autoTuneActive: Boolean) {
         LegendItem(Go3Colors.KeyGreen, "järgmine päev")
         LegendItem(Go3Colors.KeyYellow, "meeldetuletus", active = reminderActive)
         LegendItem(Go3Colors.KeyBlue, "lülitu kanalile", active = autoTuneActive)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-            PlayMarker(Modifier.size(12.dp))
-            Text("vaata kohe", color = Go3Colors.TextHint, fontSize = 12.sp)
-        }
+
     }
 }
 
-@Composable
-private fun PlayMarker(modifier: Modifier = Modifier) {
-    Canvas(modifier) {
-        val triangle = Path().apply {
-            moveTo(size.width * 0.2f, size.height * 0.1f)
-            lineTo(size.width * 0.85f, size.height * 0.5f)
-            lineTo(size.width * 0.2f, size.height * 0.9f)
-            close()
-        }
-        drawPath(triangle, Color.White)
-    }
-}
 
 @Composable
 private fun LegendItem(dotColor: Color, label: String, active: Boolean = false) {
@@ -915,7 +889,6 @@ private fun GuideChannelRow(
     now: Instant,
     scheduledReminderIds: Set<String>,
     scheduledAutoTuneIds: Set<String>,
-    watchNowAvailableIds: Set<String>,
 ) {
     val selectedChannel = channelIndex == selectedChannelIndex
     val rowColor = if (selectedChannel) Go3Colors.SelectedRow else Go3Colors.GuideRowTint
@@ -950,7 +923,6 @@ private fun GuideChannelRow(
             now = now,
             scheduledReminderIds = scheduledReminderIds,
             scheduledAutoTuneIds = scheduledAutoTuneIds,
-            watchNowAvailableIds = watchNowAvailableIds,
             modifier = Modifier.weight(1f).fillMaxHeight().background(Go3Colors.TimelineBackground),
         )
     }
@@ -965,7 +937,6 @@ private fun GuideTimelineCanvas(
     now: Instant,
     scheduledReminderIds: Set<String>,
     scheduledAutoTuneIds: Set<String>,
-    watchNowAvailableIds: Set<String>,
     modifier: Modifier,
 ) {
     val fillPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
@@ -979,8 +950,6 @@ private fun GuideTimelineCanvas(
     val actionHaloPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
     val reminderPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
     val autoTunePaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
-    val watchNowPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL } }
-    val watchNowPath = remember { android.graphics.Path() }
     val drawingPrograms = remember(programs, selectedProgramId, windowStart, windowEnd) {
         programs
             .filter { ProgramWindow.overlaps(it, windowStart, windowEnd) }
@@ -1003,7 +972,6 @@ private fun GuideTimelineCanvas(
         actionHaloPaint.color = Go3Colors.InkShadow.toArgb()
         reminderPaint.color = Go3Colors.KeyYellow.toArgb()
         autoTunePaint.color = Go3Colors.KeyBlue.toArgb()
-        watchNowPaint.color = Color.White.toArgb()
 
         drawingPrograms.forEach { program ->
                 val clippedStart = if (program.startsAt.isBefore(windowStart)) windowStart else program.startsAt
@@ -1035,7 +1003,7 @@ private fun GuideTimelineCanvas(
                 titlePaint.color = Color.White.toArgb()
                 val timeBaseline = 4.dp.toPx() + timePaint.textSize
                 canvas.drawText(formatTime(program.startsAt), left + horizontalPadding, timeBaseline, timePaint)
-                val titleWidth = (availableTextWidth - if (program.id in watchNowAvailableIds) 18.dp.toPx() else 0f).coerceAtLeast(1f)
+                val titleWidth = availableTextWidth.coerceAtLeast(1f)
                 val title = TextUtils.ellipsize(program.title, titlePaint, titleWidth, TextUtils.TruncateAt.END).toString()
                 canvas.drawText(title, left + horizontalPadding, timeBaseline + titlePaint.textSize + 2.dp.toPx(), titlePaint)
 
@@ -1070,8 +1038,7 @@ private fun GuideTimelineCanvas(
         drawingPrograms.forEach { program ->
             val hasReminder = program.id in scheduledReminderIds
             val hasAutoTune = program.id in scheduledAutoTuneIds
-            val hasWatchNow = program.id in watchNowAvailableIds
-            if (!hasReminder && !hasAutoTune && !hasWatchNow) return@forEach
+            if (!hasReminder && !hasAutoTune) return@forEach
 
             val clippedStart = if (program.startsAt.isBefore(windowStart)) windowStart else program.startsAt
             val clippedEnd = if (program.endsAt.isAfter(windowEnd)) windowEnd else program.endsAt
@@ -1097,16 +1064,7 @@ private fun GuideTimelineCanvas(
                 canvas.drawCircle(rightDotX, dotY, haloRadius, actionHaloPaint)
                 canvas.drawCircle(rightDotX, dotY, dotRadius, autoTunePaint)
             }
-            if (hasWatchNow) {
-                val x = right - 10.dp.toPx()
-                val y = size.height - 11.dp.toPx()
-                watchNowPath.reset()
-                watchNowPath.moveTo(x - 2.5.dp.toPx(), y - 4.dp.toPx())
-                watchNowPath.lineTo(x + 4.dp.toPx(), y)
-                watchNowPath.lineTo(x - 2.5.dp.toPx(), y + 4.dp.toPx())
-                watchNowPath.close()
-                canvas.drawPath(watchNowPath, watchNowPaint)
-            }
+
         }
     }
 }
@@ -1186,6 +1144,7 @@ private fun DisplaySettingsOverlay(state: TvUiState) {
                     Text(setting.description, color = Go3Colors.TextSecondary, fontSize = 13.sp)
                 }
                 when (setting) {
+                    DisplaySetting.AUTO_NEXT -> SettingToggle(state.autoplayNext)
                     DisplaySetting.CLOCK -> SettingToggle(state.showClock)
                     DisplaySetting.CHANNEL_INFO -> SettingValue("${state.channelInfoSeconds} s")
                     DisplaySetting.SEEK_OVERLAY -> SettingValue("${state.seekOverlaySeconds} s")
@@ -1999,7 +1958,6 @@ private fun TonightOverlay(state: TvUiState) {
                             selected = index == state.tonight.index,
                             reminderSet = entry.program.id in state.scheduledReminderIds,
                             autoTuneSet = entry.program.id in state.scheduledAutoTuneIds,
-                            watchNowAvailable = state.watchNowFor(entry.program).availableFor(entry.program),
                         )
                     }
                 }
@@ -2025,7 +1983,7 @@ private fun TonightOverlay(state: TvUiState) {
                     fontSize = 11.sp,
                     modifier = Modifier.weight(1f),
                 )
-                KeyHintRow("▲▼" to "vali", "OK" to if (state.watchNow.availableFor(entries.getOrNull(state.tonight.index)?.program)) "vaata kohe" else "vaata / tuleta meelde")
+                KeyHintRow("▲▼" to "vali", "OK" to "vaata / tuleta meelde")
                 Spacer(Modifier.width(14.dp))
                 ColorKeyDot(Go3Colors.KeyYellow, "meeldetuletus")
                 Spacer(Modifier.width(10.dp))
@@ -2044,7 +2002,6 @@ private fun TonightProgramRow(
     selected: Boolean,
     reminderSet: Boolean,
     autoTuneSet: Boolean,
-    watchNowAvailable: Boolean,
 ) {
     val program = entry.program
     val live = ProgramWindow.isCurrent(program, now)
@@ -2092,9 +2049,7 @@ private fun TonightProgramRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (watchNowAvailable) {
-                Text("VAATA KOHE · OK", color = if (selected) Color.White else Go3Colors.Cyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            } else if (live) {
+            if (live) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(
                         Modifier

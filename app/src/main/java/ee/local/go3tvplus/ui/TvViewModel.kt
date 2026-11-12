@@ -1,5 +1,7 @@
 package ee.local.go3tvplus.ui
 
+import ee.local.go3tvplus.catalog.*
+import androidx.media3.common.Player
 import android.content.Context
 import android.view.KeyEvent
 import androidx.lifecycle.ViewModel
@@ -24,7 +26,6 @@ import ee.local.go3tvplus.domain.Profile
 import ee.local.go3tvplus.domain.Program
 import ee.local.go3tvplus.domain.ProgramWindow
 import ee.local.go3tvplus.domain.GuideViewport
-import ee.local.go3tvplus.domain.WatchNowSource
 import ee.local.go3tvplus.domain.TransitStopSelection
 import ee.local.go3tvplus.domain.WeatherLocation
 import ee.local.go3tvplus.domain.number
@@ -70,9 +71,83 @@ class TvViewModel(
     private val stationsGateway: IlmateenistusGateway,
     private val transitGateway: PeatusTransitGateway,
     private val tvPlayer: TvPlayer,
+    private val catalogRepository: CatalogRepository,
+    context: Context,
     isDemo: Boolean,
 ) : ViewModel(), TvPlayer.Listener {
     val mediaPlayer get() = tvPlayer.player
+    val catalog = CatalogViewModel(catalogRepository, viewModelScope, context)
+    private var vodItem: CatalogTitle? = null
+    private var vodProfile: String? = null
+    private var vodTransition = false
+    private var vodResumeMs = 0L
+    private var pendingVodSeek: Long? = null
+    private var catalogueSettings = false
+    private fun saveVodProgress() {
+        if (vodTransition) return
+        val item = vodItem ?: return
+        val profile = vodProfile ?: return
+        val seek = tvPlayer.seekSnapshot()
+        if (seek.durationMs > 0) {
+            vodResumeMs = seek.positionMs
+            catalog.saveProgress(profile, item, seek.positionMs, seek.durationMs)
+        }
+    }
+    private fun returnFromVod() {
+        saveVodProgress()
+        vodItem = null; vodProfile = null; pendingVodSeek = null
+        catalog.showDetails()
+        mutableState.update { it.copy(overlay = Overlay.NONE, error = null) }
+        currentChannel()?.let { tune(it, wakeRecovery = true) }
+    }
+    private fun playCatalog(item: CatalogTitle, position: Long) {
+        val profile = snapshot.selectedProfileId ?: return
+        saveVodProgress()
+        vodTransition = true
+        vodItem = item; vodProfile = profile; vodResumeMs = position
+        playbackRetryJob?.cancel()
+        val generation = ++tuneGeneration
+        tuneJob?.cancel()
+        tuneJob = viewModelScope.launch {
+            var acquired: PlaybackTicket? = null
+            var adopted = false
+            mutableState.update { it.copy(overlay = Overlay.NONE, loading = true, error = null) }
+            try {
+                tuneMutex.withLock {
+                    ensureActive()
+                    prolongJob?.cancel()
+                    tvPlayer.stopAndClear()
+                    val old = activeTicket?.playbackSessionId
+                    activeTicket = null
+                    withContext(NonCancellable) { repository.closePlayback(old) }
+                    ensureActive()
+                    withContext(NonCancellable) { acquired = catalogRepository.ticket(profile, item.id) }
+                    ensureActive()
+                    if (generation != tuneGeneration) return@withLock
+                    val ticket = acquired ?: return@withLock
+                    manuallyTimeShifted = true
+                    pendingChannelId = null
+                    pendingVodSeek = position
+                    activeTicket = ticket
+                    scheduleProlong(ticket)
+                    tvPlayer.play(ticket, "Go3", item.title)
+                    vodTransition = false
+                    adopted = true
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                if (generation == tuneGeneration) {
+                    vodItem = null; vodProfile = null; pendingVodSeek = null
+                    catalog.fail(if (e is Go3Failure.NotEntitled) "See teos ei kuulu sinu paketti" else e.message)
+                    currentChannel()?.let { tune(it, wakeRecovery = true) }
+                }
+            } finally {
+                vodTransition = false
+                if (!adopted) withContext(NonCancellable) { repository.closePlayback(acquired?.playbackSessionId) }
+                if (generation == tuneGeneration) mutableState.update { it.copy(loading = false) }
+            }
+        }
+    }
     private val mutableState = MutableStateFlow(TvUiState(auth = authCoordinator.state.value, isDemo = isDemo))
     val state: StateFlow<TvUiState> = mutableState.asStateFlow()
     private val updateRequests = CoroutineChannel<Unit>(CoroutineChannel.CONFLATED)
@@ -110,93 +185,36 @@ class TvViewModel(
     private val shownReminderIds = mutableSetOf<String>()
     private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val tuneMutex = Mutex()
-    private val watchNowRevision = MutableStateFlow(0)
-    private var requestedWatchNow: WatchNowQuery? = null
-
-    private data class WatchNowQuery(val profileId: String, val program: Program, val channels: Set<String>, val overlay: Overlay)
-    private data class WatchNowBatchQuery(val profileId: String, val programs: List<Program>, val channels: Set<String>, val overlay: Overlay)
-
-    private fun watchNowQuery(current: TvUiState): WatchNowQuery? {
-        val profile = current.selectedProfileId ?: return null
-        val program = current.selectedScheduleProgram ?: return null
-        if (!program.startsAt.isAfter(Instant.now())) return null
-        return WatchNowQuery(profile, program, current.channels.mapTo(mutableSetOf(), Channel::id), current.overlay)
-    }
-
-    private fun watchNowBatchQuery(current: TvUiState): WatchNowBatchQuery? {
-        val profile = current.selectedProfileId ?: return null
-        val now = Instant.now()
-        val programs = when (current.overlay) {
-            Overlay.GUIDE -> GuideViewport.upcomingPrograms(
-                current.visibleChannels, current.programsByChannel, current.guideChannelIndex,
-                current.guideWindowStart ?: ProgramWindow.guideWindowStart(current.guideAnchor ?: now, ZoneId.systemDefault()), now,
-            )
-            Overlay.TONIGHT -> current.tonight.entries.map { it.program }.filter { it.startsAt.isAfter(now) }
-            else -> return null
-        }.toMutableList()
-        current.selectedScheduleProgram?.takeIf { it.startsAt.isAfter(now) && programs.none { p -> p.id == it.id } }?.let(programs::add)
-        return WatchNowBatchQuery(profile, programs, current.channels.mapTo(mutableSetOf(), Channel::id), current.overlay)
-    }
-
-    private fun publishWatchNow(query: WatchNowBatchQuery, results: Map<Program, List<WatchNowSource>>, failed: Boolean = false) {
-        val at = Instant.now()
-        mutableState.update { current ->
-            if (watchNowBatchQuery(current) != query) return@update current
-            val updated = current.watchNowResults.toMutableMap()
-            results.forEach { (program, sources) ->
-                updated.remove(program.id)
-                updated[program.id] = (updated[program.id] ?: WatchNowState()).refreshed(program, sources, at, failed)
-            }
-            while (updated.size > 512) updated.remove(updated.keys.first())
-            current.copy(watchNowResults = updated)
-        }
-        val requested = requestedWatchNow
-        if (requested != null && requested == watchNowQuery(snapshot) && requested.program in results) {
-            requestedWatchNow = null
-            if (failed) showNotice("Vaatamisvõimaluse kontroll ebaõnnestus. Vajuta OK uuesti.")
-            else activateWatchNow(requested.program)
-        }
-    }
-
     init {
         tvPlayer.setListener(this)
-        viewModelScope.launch {
-            state.map(::watchNowQuery).distinctUntilChanged()
-                .collect { if (requestedWatchNow != it) requestedWatchNow = null }
+        mutableState.update { it.copy(autoplayNext = catalog.state.value.autoplay) }
+        catalog.onPlay = ::playCatalog
+        catalog.onTv = {
+            if (vodItem != null) {
+                saveVodProgress(); vodItem = null; vodProfile = null; pendingVodSeek = null
+                currentChannel()?.let { tune(it, wakeRecovery = true) }
+            }
+            mutableState.update { it.copy(overlay = Overlay.NONE) }
         }
+        catalog.onSettings = { catalogueSettings = true; openAppSettings() }
         viewModelScope.launch {
-            val clock = flow {
-                while (true) { emit(Instant.now().epochSecond / 30); delay(30_000L) }
+            state.map { it.selectedProfileId }.distinctUntilChanged().collect { catalog.setProfile(it) }
+        }
+        tvPlayer.player.addListener(object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) { if (!isPlaying) saveVodProgress() }
+            override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) { saveVodProgress() }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED) { saveVodProgress(); vodItem?.let(catalog::ended) }
             }
-            combine(state, watchNowRevision, clock) { current, revision, tick ->
-                Triple(watchNowBatchQuery(current), revision, tick)
+        })
+        viewModelScope.launch {
+            var ticks = 0
+            while (true) {
+                delay(1000)
+                catalogRepository.prefetchAllowed = tvPlayer.player.playbackState == Player.STATE_IDLE || tvPlayer.player.playbackState == Player.STATE_ENDED ||
+                    (tvPlayer.player.playbackState == Player.STATE_READY && tvPlayer.player.totalBufferedDuration >= 5000)
+                if (++ticks % 10 == 0) saveVodProgress()
             }
-                .distinctUntilChanged()
-                .collectLatest { (query, _, _) ->
-                    if (query == null) {
-                        requestedWatchNow = null
-                        return@collectLatest
-                    }
-                    mutableState.update { current ->
-                        if (current.watchNowProfileId == query.profileId && current.watchNowChannelIds == query.channels) current
-                        else current.copy(watchNowProfileId = query.profileId, watchNowChannelIds = query.channels, watchNowResults = emptyMap())
-                    }
-                    var resolved: Set<Program> = emptySet()
-                    try {
-                        // Avoid starting new work while the user scrolls rapidly. Explicit OK takes priority.
-                        if (requestedWatchNow == null) delay(800L)
-                        repository.watchNowSourcesBatch(query.profileId, query.programs, query.channels).collect { results ->
-                            ensureActive()
-                            resolved = results.keys
-                            publishWatchNow(query, results)
-                        }
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Exception) {
-                        if (watchNowBatchQuery(snapshot) == query)
-                            publishWatchNow(query, query.programs.filterNot { it in resolved }.associateWith { emptyList() }, failed = true)
-                    }
-                }
         }
         viewModelScope.launch {
             val playback = preferences.playbackPreferences()
@@ -343,6 +361,10 @@ class TvViewModel(
     }
 
     fun selectProfile(profile: Profile) {
+        if (snapshot.selectedProfileId != profile.id && vodItem != null) {
+            saveVodProgress(); vodItem = null; vodProfile = null; pendingVodSeek = null
+            currentChannel()?.let { tune(it, wakeRecovery = true) }
+        }
         viewModelScope.launch {
             preferences.saveSelectedProfile(profile.id)
             val firstLoad = snapshot.channels.isEmpty()
@@ -428,6 +450,32 @@ class TvViewModel(
     // ---------------------------------------------------------------- key routing
 
     fun handleKey(event: KeyEvent): Boolean {
+        val catalogState = catalog.state.value
+        if (catalogState.countdown != null && event.keyCode in (CONFIRM_KEYS + KeyEvent.KEYCODE_BACK)) {
+            if (event.isFirstPress) { if (event.keyCode == KeyEvent.KEYCODE_BACK) catalog.cancelNext() else catalog.nextNow() }
+            return true
+        }
+        if (catalogState.visible) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.keyCode in setOf(KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN)) catalog.recordRemoteInput()
+            if (event.keyCode in MEDIA_PLAYBACK_KEYS) {
+                if (event.isFirstPress) changePlayback(event.keyCode)
+                return true
+            }
+            if (event.keyCode in setOf(KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_CHANNEL_DOWN) || digitFor(event.keyCode) != null) {
+                // Digits must still reach a focused search field, but never tune TV.
+                return event.keyCode in setOf(KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_CHANNEL_DOWN) || catalogState.section != CatalogSection.SEARCH
+            }
+            return false // Compose owns D-pad and BACK (including the search IME).
+        }
+        if (vodItem != null && event.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.isFirstPress) returnFromVod()
+            return true
+        }
+        if (vodItem != null && (digitFor(event.keyCode) != null || event.keyCode == KeyEvent.KEYCODE_CHANNEL_UP || event.keyCode == KeyEvent.KEYCODE_CHANNEL_DOWN)) return true
+        if (event.keyCode == KeyEvent.KEYCODE_BACK && catalogueSettings && snapshot.overlay == Overlay.APP_SETTINGS) {
+            if (event.isFirstPress) { catalogueSettings = false; mutableState.update { it.copy(overlay = Overlay.NONE) }; catalog.openMenu() }
+            return true
+        }
         if (guideLongPressHandled && event.keyCode.isConfirmKey()) {
             if (event.action == KeyEvent.ACTION_UP) {
                 guideLongPressHandled = false
@@ -574,16 +622,18 @@ class TvViewModel(
 
     private fun handlePlayerKey(keyCode: Int): Boolean = when (keyCode) {
         KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
-            showRail()
-            channelStep(if (keyCode == KeyEvent.KEYCODE_DPAD_UP) -1 else 1, immediate = false)
+            if (vodItem != null) openSeekOverlay() else {
+                showRail()
+                channelStep(if (keyCode == KeyEvent.KEYCODE_DPAD_UP) -1 else 1, immediate = false)
+            }
             true
         }
         KeyEvent.KEYCODE_DPAD_RIGHT -> {
-            toggleGuide()
+            if (vodItem != null) openSeekOverlay() else toggleGuide()
             true
         }
         KeyEvent.KEYCODE_DPAD_LEFT -> {
-            openAppSettings()
+            catalog.openMenu()
             true
         }
         in CONFIRM_KEYS -> {
@@ -728,7 +778,7 @@ class TvViewModel(
             true
         }
         KeyEvent.KEYCODE_DPAD_RIGHT -> {
-            toggleGuide()
+            if (vodItem != null) openSeekOverlay() else toggleGuide()
             true
         }
         in CONFIRM_KEYS -> {
@@ -1002,30 +1052,6 @@ class TvViewModel(
                 tune(channel)
             }
             ProgramWindow.GuideSelectionAction.SHOW_INFO -> if (program != null) {
-                activateWatchNow(program)
-            }
-        }
-    }
-
-    private fun activateWatchNow(program: Program) {
-        val current = snapshot
-        val query = watchNowQuery(current) ?: return
-        val available = current.watchNow
-        when {
-            available.availableFor(program) -> playWatchNow(program, available.sources)
-            available.program != program || available.failed -> {
-                requestedWatchNow = query
-                watchNowRevision.value += 1
-                showNotice("Kontrollin vaatamise võimalust…")
-            }
-            available.checking -> {
-                requestedWatchNow = query
-                watchNowRevision.value += 1
-                showNotice("Kontrollin vaatamise võimalust…")
-            }
-            current.overlay == Overlay.TONIGHT -> toggleScheduledProgramAction(program, toggleReminder = true)
-            else -> {
-                mutableState.update { it.copy(error = null, errorActionIndex = 0) }
                 showNotice(program.description?.takeIf(String::isNotBlank) ?: "${program.title} pole veel alanud")
             }
         }
@@ -1339,6 +1365,7 @@ class TvViewModel(
             KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN ->
                 selectMenuIndex(stepIndex(current.menuIndex, if (keyCode == KeyEvent.KEYCODE_DPAD_UP) -1 else 1, DisplaySetting.entries.size))
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, in CONFIRM_KEYS -> when (DisplaySetting.entries[current.menuIndex]) {
+                DisplaySetting.AUTO_NEXT -> { catalog.autoplay(); mutableState.update { it.copy(autoplayNext = catalog.state.value.autoplay) } }
                 DisplaySetting.CLOCK -> toggleClock(showConfirmation = false)
                 DisplaySetting.CHANNEL_INFO -> {
                     val seconds = DisplaySetting.CHANNEL_INFO.cycle(current.channelInfoSeconds, direction)
@@ -1724,7 +1751,7 @@ class TvViewModel(
                 if (entry == null) return true
                 val now = Instant.now()
                 when {
-                    entry.program.startsAt.isAfter(now) -> activateWatchNow(entry.program)
+                    entry.program.startsAt.isAfter(now) -> toggleScheduledProgramAction(entry.program, toggleReminder = true)
                     // Käimasolev saade: hüppa kohe kanalile.
                     entry.program.endsAt.isAfter(now) -> {
                         mutableState.update { it.copy(overlay = Overlay.NONE, error = null, errorActionIndex = 0) }
@@ -1867,13 +1894,6 @@ class TvViewModel(
         playOnDemand(program, preserveGuideOnFailure = false) { profileId -> catchupTicketWithRefresh(profileId, program) }
     }
 
-    private fun playWatchNow(program: Program, sources: List<WatchNowSource>) {
-        val channels = snapshot.channels.mapTo(mutableSetOf(), Channel::id)
-        playOnDemand(program, preserveGuideOnFailure = true) { profileId ->
-            repository.watchNowTicket(profileId, program, sources, channels)
-        }
-    }
-
     private fun playOnDemand(
         program: Program,
         preserveGuideOnFailure: Boolean,
@@ -1963,6 +1983,7 @@ class TvViewModel(
         channelId == other.channelId && startsAt == other.startsAt && endsAt == other.endsAt
 
     override fun onReady() {
+        pendingVodSeek?.let { position -> pendingVodSeek = null; if (position > 0) tvPlayer.player.seekTo(position) }
         pendingChannelId?.let { id ->
             viewModelScope.launch { preferences.saveLastChannel(id) }
             pendingChannelId = null
@@ -1981,6 +2002,12 @@ class TvViewModel(
     }
 
     override fun onError(error: PlaybackException) {
+        if (vodItem != null) {
+            saveVodProgress(); vodItem = null; vodProfile = null
+            catalog.fail("Video esitamine ebaõnnestus. Proovi uuesti.")
+            currentChannel()?.let { tune(it, wakeRecovery = true) }
+            return
+        }
         val ticket = activeTicket ?: return showError(error)
         if (retryCount >= 3) return showError(error)
         val delaySeconds = 1 shl retryCount
@@ -2023,6 +2050,8 @@ class TvViewModel(
 
     fun onAppBackgrounded() {
         if (wasBackgrounded) return
+        saveVodProgress()
+        catalog.cancelNext()
         wasBackgrounded = true
         startupRecoveryJob?.cancel()
         startupRecoveryJob = null
@@ -2055,6 +2084,7 @@ class TvViewModel(
         if (!wasBackgrounded) return
         wasBackgrounded = false
         if (needsStartup) return
+        vodItem?.let { item -> playCatalog(item, vodResumeMs); return }
         val channel = currentChannel() ?: return
         tune(channel, wakeRecovery = true)
         // Let the first video segments through before checking whether the guide needs refreshing.
@@ -2088,6 +2118,7 @@ class TvViewModel(
                     currentChannel()?.let { channel -> tvPlayer.updateNowPlaying(channel.name, nowProgram(channel.id)?.title) }
                 }
                 if (!manuallyTimeShifted) tvPlayer.correctLiveDriftIfNeeded()
+                tvPlayer.reportPlaybackDiagnostics()
             }
         }
     }
@@ -2128,6 +2159,7 @@ class TvViewModel(
     }
 
     override fun onCleared() {
+        saveVodProgress()
         guideOkJob?.cancel()
         prolongJob?.cancel()
         seekUiJob?.cancel()
@@ -2222,6 +2254,8 @@ class TvViewModel(
             container.stations,
             container.transit,
             TvPlayer(context),
+            container.catalog,
+            context,
             container.isDemo,
         ) as T
     }

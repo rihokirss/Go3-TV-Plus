@@ -3,15 +3,22 @@
 package ee.local.go3tvplus.player
 
 import android.content.Context
+import android.os.Build
+import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Format
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLivePlaybackSpeedControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DecoderReuseEvaluation
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.dash.DashMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection
@@ -30,6 +37,14 @@ data class SeekSnapshot(
 
 class TvPlayer(context: Context) {
     private val appContext = context.applicationContext
+    // This Realtek TV exposes a 60 Hz app display while broadcast video runs at
+    // 25/50 fps. Use its supported audio/video hardware clock instead of app-vsync
+    // frame scheduling. The selector falls back if either renderer lacks support.
+    private val useHardwareAvSync = Build.MANUFACTURER.equals("TCL", ignoreCase = true) && Build.HARDWARE == "rtd6748"
+    private val playbackDiagnostics = BuildConfig.DEBUG || useHardwareAvSync ||
+        appContext.getSharedPreferences("local_diagnostics", Context.MODE_PRIVATE).getBoolean("playback", false)
+    private val minLiveSpeed = if (useHardwareAvSync) 1f else 0.995f
+    private val maxLiveSpeed = if (useHardwareAvSync) 1f else 1.005f
     private val trackSelector = DefaultTrackSelector(
         appContext,
         AdaptiveTrackSelection.Factory(
@@ -50,17 +65,26 @@ class TvPlayer(context: Context) {
                 // If a channel has no >=48 fps representation, the explicit exceed
                 // fallback keeps its normal 25 fps tracks playable.
                 .setMinVideoFrameRate(MIN_SMOOTH_VIDEO_FRAME_RATE)
-                .setExceedVideoConstraintsIfNecessary(true),
+                .setExceedVideoConstraintsIfNecessary(true)
+                .setTunnelingEnabled(useHardwareAvSync),
         )
     }
     private val liveSpeedControl = DefaultLivePlaybackSpeedControl.Builder()
         // Wide speed changes are visible as judder on 25/50 fps TV channels.
-        .setFallbackMinPlaybackSpeed(0.995f)
-        .setFallbackMaxPlaybackSpeed(1.005f)
+        .setFallbackMinPlaybackSpeed(minLiveSpeed)
+        .setFallbackMaxPlaybackSpeed(maxLiveSpeed)
         .setMaxLiveOffsetErrorMsForUnitSpeed(2_000)
         .setMinUpdateIntervalMs(2_000)
         .build()
+    // Bound compressed video memory while retaining ~24 s at Go3's 8 Mbps 1080p50.
+    // Metadata and decoded posters share the 192 MB heap on older Android TVs.
+    private val loadControl = DefaultLoadControl.Builder()
+        .setBufferDurationsMs(15_000, 30_000, 1_500, 3_000)
+        .setTargetBufferBytes(24 * 1024 * 1024)
+        .setPrioritizeTimeOverSizeThresholds(false)
+        .build()
     val player: ExoPlayer = ExoPlayer.Builder(appContext)
+        .setLoadControl(loadControl)
         .setTrackSelector(trackSelector)
         .setLivePlaybackSpeedControl(liveSpeedControl)
         .setSeekBackIncrementMs(30_000)
@@ -83,7 +107,12 @@ class TvPlayer(context: Context) {
 
     init {
         player.addListener(object : Player.Listener {
+            override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
+                if (playbackDiagnostics) Log.i("Go3Playback", "speed=${playbackParameters.speed} hardwareAvSyncRequested=$useHardwareAvSync")
+            }
+
             override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackDiagnostics) Log.i("Go3Playback", "state=$playbackState bufferedMs=${player.totalBufferedDuration} hardwareAvSyncRequested=$useHardwareAvSync")
                 if (playbackState == Player.STATE_READY) {
                     if (baselineLiveOffsetMs == null) {
                         baselineLiveOffsetMs = validTime(player.currentLiveOffset)
@@ -100,10 +129,43 @@ class TvPlayer(context: Context) {
                 listener?.onFirstFrame()
             }
         })
+        player.addAnalyticsListener(object : AnalyticsListener {
+            override fun onVideoDecoderInitialized(
+                eventTime: AnalyticsListener.EventTime,
+                decoderName: String,
+                initializedTimestampMs: Long,
+                initializationDurationMs: Long,
+            ) {
+                if (playbackDiagnostics) Log.i("Go3Playback", "videoDecoder=$decoderName initMs=$initializationDurationMs hardwareAvSyncRequested=$useHardwareAvSync")
+            }
+
+            override fun onVideoInputFormatChanged(
+                eventTime: AnalyticsListener.EventTime,
+                format: Format,
+                decoderReuseEvaluation: DecoderReuseEvaluation?,
+            ) {
+                if (playbackDiagnostics) Log.i("Go3Playback", "video=${format.width}x${format.height} fps=${format.frameRate} bitrate=${format.bitrate}")
+            }
+
+            override fun onDroppedVideoFrames(eventTime: AnalyticsListener.EventTime, droppedFrames: Int, elapsedMs: Long) {
+                if (playbackDiagnostics) Log.w("Go3Playback", "droppedFrames=$droppedFrames elapsedMs=$elapsedMs bufferedMs=${player.totalBufferedDuration}")
+            }
+        })
     }
 
     fun setListener(listener: Listener) {
         this.listener = listener
+    }
+
+    /** Low-frequency, local diagnostics contain no stream URLs, account IDs or credentials. */
+    fun reportPlaybackDiagnostics() {
+        if (!playbackDiagnostics || !player.isPlaying) return
+        val counters = player.videoDecoderCounters
+        counters?.ensureUpdated()
+        Log.i("Go3Playback", "health state=${player.playbackState} bufferedMs=${player.totalBufferedDuration} " +
+            "speed=${player.playbackParameters.speed} fps=${player.videoFormat?.frameRate} " +
+            "rendered=${counters?.renderedOutputBufferCount} dropped=${counters?.droppedBufferCount} " +
+            "queued=${counters?.queuedInputBufferCount} heapMb=${(Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1048576} hardwareAvSyncRequested=$useHardwareAvSync")
     }
 
     fun play(
@@ -121,8 +183,8 @@ class TvPlayer(context: Context) {
             .setMediaMetadata(nowPlayingMetadata(channelName, programTitle))
             .setLiveConfiguration(
                 MediaItem.LiveConfiguration.Builder()
-                    .setMinPlaybackSpeed(0.995f)
-                    .setMaxPlaybackSpeed(1.005f)
+                    .setMinPlaybackSpeed(minLiveSpeed)
+                    .setMaxPlaybackSpeed(maxLiveSpeed)
                     .build(),
             )
             .apply {
