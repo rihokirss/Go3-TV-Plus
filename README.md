@@ -5,6 +5,22 @@ Mitteametlik Android TV klient kiireks ja puldisõbralikuks Go3 telekanalite, fi
 > [!IMPORTANT]
 > See on sõltumatu kogukonnaprojekt, mitte Go3 ametlik rakendus. Go3 nimi ja teenus kuuluvad nende omanikele. Rakendus eeldab kasutaja enda kehtivat Go3 tellimust ning kasutab Go3 tavapärast seadmesidumist ja ametlikku DRM-litsentsivoogu. DRM-i ega teenuse piiranguid ei eemaldata.
 
+## Ekraanipildid
+
+[![Go3 Airi filmikataloog: suur taustapilt, teose tutvustus ja plakatiread](docs/screenshots/filmid.webp)](docs/screenshots/filmid.webp)
+
+**Filmid suurele ekraanile.** Valitud teose taustapilt ja tutvustus, plakatiread ning puldiga kasutatavad filtrid.
+
+| Filmi detailid | Seriaalide hooajad ja osad |
+| :---: | :---: |
+| [![Filmi detailvaade: tutvustus, keeleandmed ja vaatamise valikud](docs/screenshots/filmi-detail.webp)](docs/screenshots/filmi-detail.webp) | [![Seriaali detailvaade hooajavaliku ja episoodikaardiga](docs/screenshots/seriaali-osad.webp)](docs/screenshots/seriaali-osad.webp) |
+| Vaata, alusta algusest või lisa oma nimekirja. | Vali hooaeg ja jätka sobivast episoodist. |
+| **Ühine otsing** | **Telekava · illustratsioon** |
+| [![Filmide ja seriaalide otsing plakatiruudustiku ning paketi-, liigi-, žanri- ja aastafiltritega](docs/screenshots/otsing.webp)](docs/screenshots/otsing.webp) | [![Telekava illustratsioon: kanalite saateruudustik ja valitud saate info looduskaadri taustal](docs/screenshots/telekava-illustratsioon.webp)](docs/screenshots/telekava-illustratsioon.webp) |
+| Leia filmid ja seriaalid ühest vaatest. | Sirvi saatekava mängiva video peal. |
+
+Kataloogivaated on Go3 Air 0.5.0 päris ekraanipildid Sony Android TV-st. Telekava illustratsioon on loodud päris ekraanipildi põhjal: DRM-i tõttu mustaks jääv videotaust on asendatud tehisintellektiga loodud looduskaadriga. [Algne telekava ekraanipilt](docs/screenshots/telekava-originaal.webp) ja [piltide päritolu](docs/screenshots/README.md). Piltidel olev sisu sõltub Go3 valikust ning kasutaja paketist.
+
 ## Põhivõimalused
 
 - viimati vaadatud kanal avaneb automaatselt;
