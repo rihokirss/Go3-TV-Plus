@@ -53,7 +53,9 @@ interface CatalogDao {
     @Query("SELECT * FROM catalog_titles WHERE profileId = :profile ORDER BY rowid") fun titles(profile: String): Flow<List<CatalogEntity>>
     @Query("SELECT * FROM catalog_titles WHERE profileId = :profile AND seriesId = :series AND seasonId = :season") suspend fun episodes(profile: String, series: String, season: String): List<CatalogEntity>
     @Query("SELECT * FROM catalog_titles WHERE profileId = :profile AND id = :id") suspend fun title(profile: String, id: String): CatalogEntity?
-    @Query("SELECT catalog_titles.id FROM catalog_titles JOIN catalog_search ON catalog_titles.rowid = catalog_search.rowid WHERE catalog_search MATCH :query AND profileId = :profile") suspend fun search(profile: String, query: String): List<String>
+    // Materialize FTS matches once. A JOIN can choose the profile index first and
+    // repeat the expensive virtual-table MATCH for every catalogue row on Android.
+    @Query("SELECT id FROM catalog_titles WHERE profileId = :profile AND kind != 'EPISODE' AND rowid IN (SELECT rowid FROM catalog_search WHERE catalog_search MATCH :query)") suspend fun search(profile: String, query: String): List<String>
     @Insert(onConflict = OnConflictStrategy.ABORT) suspend fun insertTitles(rows: List<CatalogEntity>)
     @Update suspend fun updateTitles(rows: List<CatalogEntity>)
     @Transaction suspend fun saveTitles(rows: List<CatalogEntity>) {

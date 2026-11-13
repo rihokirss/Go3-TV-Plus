@@ -463,7 +463,7 @@ class TvViewModel(
             }
             if (event.keyCode in setOf(KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_CHANNEL_DOWN) || digitFor(event.keyCode) != null) {
                 // Digits must still reach a focused search field, but never tune TV.
-                return event.keyCode in setOf(KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_CHANNEL_DOWN) || catalogState.section != CatalogSection.SEARCH
+                return event.keyCode in setOf(KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_CHANNEL_DOWN) || !catalogState.isSearchPage
             }
             return false // Compose owns D-pad and BACK (including the search IME).
         }

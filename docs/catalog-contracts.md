@@ -6,6 +6,7 @@ Verified through the signed-in Sony Android 9 app on 2026-11-12. These are servi
 | --- | --- | --- |
 | Catalogue page | `products/vods?firstResult=…&maxResults=…&tier=…` | `items`, `meta.totalCount` |
 | Bulk genres | `products/vods/filtering?type[]=VOD&type[]=SERIAL&firstResult=…&maxResults=…&tier=…` | `items` with full `genres` arrays, `meta.totalCount` |
+| Search | `items/search?keyword=…&clips=false&episodes=false&kids=…&tier=…` | `items`; keep VOD/SERIAL, exclude TV programmes and clips |
 | Movie sections | `products/sections/v2/movies?tier=…` | Section array; discover `weekly-top-30-movies-recommendation` by slug |
 | Go3 weekly movie ranking | `int/sections/recommendations?sectionId=…&label=movies&profileUid=…&subscriberId=…&rank=…` | `elements`, ordered movie products; returned title “Kõige populaarsemad filmid Go3-s” |
 | Detail | `products/vods/{id}` | Product object |
@@ -27,7 +28,13 @@ The basic catalogue response omits `genres`. Reading them only from product deta
 
 Bulk genres and weekly ranking were additionally checked on the signed-in TCL on 2026-11-13. The ranking request carries the same subscriber/profile context and recommendation-section position as the Go3 web client; the subscriber ID stays inside the gateway. Movie ranking IDs are cached per profile and filtered by the current package/genre/year selection without changing their server order.
 
-Resource limits: Coil memory 24 MB, disk 128 MB, two concurrent image response bodies; one catalogue request; compressed video target 24 MB with 15–30 second buffering limits. Catalogue preloading waits while an active video has less than five seconds buffered. The existing TCL `rtd6748` hardware synchronization setting remains in place.
+Search follows the Go3 web client's `/items/search` contract and retains the 300 ms typing debounce. The authenticated foreground request starts alongside a local FTS lookup, without waiting behind the bulk catalogue refresh. Cached matches display first when ready; server metadata adds matches even before the complete catalogue has decoded. The server's returned set is bounded (default 200 mixed items), so cached title/original-title matches are merged rather than dropped. Original-title and accent-insensitive local matching remain available offline. Search does not write account state or open video sessions. New input/profile changes cancel both the coroutine and its HTTP call; network search has a four-second deadline. Server failure retains cached matches with a visible notice. A missing full entitlement snapshot for a newly found title remains unknown, never inferred from presence in search.
+
+The local SQL query materializes FTS row IDs in an uncorrelated subquery. The previous JOIN allowed Android SQLite to choose the profile index first and repeat MATCH for each title: the signed-in TCL measured a 3.85 s median (40 s for a broad one-character query). The revised query measured a 24 ms median and 128 ms for that broad query during the same device workflow. The search grid consumes matching title objects directly and skips genre-row construction; results/count update while the editable field retains focus. These changes ship in 0.5.2.
+
+Browse restoration uses the selected card’s stable ID and explicit per-page/per-row scroll positions. Lazy lists are created after their asynchronous data is ready; disposal and pending focus restoration cannot overwrite the saved viewport. Opening a detail or See all captures the current viewport synchronously. BACK waits for the remembered card to compose, scrolling to it only if it is outside the restored viewport. Remote-device tests cover a horizontally scrolled row and a vertically scrolled grid, including the actual focused node and exact saved offset.
+
+Resource limits: Coil memory 24 MB, disk 128 MB, two concurrent image response bodies; one background catalogue request plus a cancellable foreground search; compressed video target 24 MB with 15–30 second buffering limits. Catalogue preloading waits while an active video has less than five seconds buffered. The existing TCL `rtd6748` hardware synchronization setting remains in place.
 
 ## Profile viewing history
 

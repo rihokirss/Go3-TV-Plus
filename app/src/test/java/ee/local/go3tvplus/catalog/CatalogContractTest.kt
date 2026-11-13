@@ -43,6 +43,19 @@ class CatalogContractTest {
         assertNull(catalogSearchQuery("  *\" "))
         assertTrue(title().searchText.contains("original title"))
     }
+    @Test fun serverSearchCanShowAndOpenTitlesBeforeTheCatalogueHasLoaded() {
+        val remote = title().copy(right = ViewingRight.AVAILABLE)
+        val page = CatalogScreenState("SEARCH", "Otsing", grid = true)
+        val state = CatalogUiState(section = CatalogSection.SEARCH, pages = listOf(page),
+            searchIds = setOf(remote.id), searchTitles = listOf(remote))
+        assertTrue(state.titles.isEmpty())
+        assertEquals(listOf(remote), state.browseItems())
+        assertEquals(remote, state.copy(pages = listOf(page, CatalogScreenState("detail:1", remote.title, detailId = remote.id))).detail)
+        assertTrue(state.copy(section = CatalogSection.MOVIES, pages = listOf(CatalogScreenState("MOVIES", "Filmid"))).browseItems().isEmpty())
+        assertTrue(state.copy(searchTitles = listOf(remote.copy(right = ViewingRight.UNKNOWN))).browseItems().isEmpty())
+        assertTrue(state.copy(section = CatalogSection.SETTINGS).isSearchPage)
+        assertEquals(listOf(remote), state.copy(section = CatalogSection.SETTINGS).browseItems())
+    }
     @Test fun watchedThresholdIsPreciselyNinetyFivePercent() {
         val progress = CatalogProgress("a", "film", null, 9499, 10000, 0)
         assertFalse(progress.watched); assertTrue(progress.copy(positionMs = 9500).watched)

@@ -297,4 +297,56 @@ class CatalogRepository(private val gateway: Go3Gateway, private val auth: AuthC
     // Episodes use the MOVIE ticket contract too (verified on Sony with the normal Widevine licence).
     suspend fun ticket(profile: String, id: String) = gateway.movieTicket(auth.accessToken(), profile, id)
     suspend fun search(profile: String, query: String): Set<String>? = catalogSearchQuery(query)?.let { dao.search(profile, it).toSet() }
+
+    /** Start Go3 immediately, alongside the local index. Neither waits for a full catalogue load. */
+    fun searchResults(profile: String, query: String): Flow<CatalogSearchResult> = combine(
+        searchSource { cachedSearchTitles(profile, search(profile, query).orEmpty()) },
+        searchSource { remoteSearchTitles(profile, query) },
+    ) { cached, remote ->
+        if (cached == null && remote == null) return@combine null
+        if (cached?.isFailure == true && remote?.isFailure == true) throw remote.exceptionOrNull()!!
+        val items = (remote?.getOrNull().orEmpty() + cached?.getOrNull().orEmpty()).distinctBy { it.id }
+        CatalogSearchResult(items, remote == null || (remote.isFailure && cached == null), remote?.isFailure == true && cached?.isSuccess == true)
+    }.filterNotNull()
+
+    private fun searchSource(block: suspend () -> List<CatalogTitle>): Flow<Result<List<CatalogTitle>>?> = flow {
+        emit(null)
+        val result = try { Result.success(block()) }
+        catch (error: CancellationException) { throw error }
+        catch (error: Exception) { Result.failure(error) }
+        emit(result)
+    }.flowOn(Dispatchers.Default)
+
+    private suspend fun cachedSearchTitles(profile: String, ids: Set<String>): List<CatalogTitle> {
+        val missing = ids.filter { decoded["$profile:$it"] == null }
+        missing.chunked(120).forEach { chunk ->
+            currentCoroutineContext().ensureActive()
+            dao.titlesByIds(profile, chunk).forEach(::decode)
+        }
+        val items = ids.mapNotNull { decoded["$profile:$it"]?.title }
+        return withRights(profile, flowOf(items)).first()
+    }
+
+    private suspend fun remoteSearchTitles(profile: String, query: String): List<CatalogTitle> {
+        // Foreground search must not queue behind the bulk catalogue refresh mutex.
+        val raw = gateway.catalogSearch(auth.accessToken(), profile, query)
+        val cached = raw.mapNotNull { it.text("id") }.chunked(120).flatMap { dao.titlesByIds(profile, it) }
+            .mapNotNull(::decode).associateBy { it.id }
+        val completeRights = knownRights(profile)
+        val sync = dao.syncSnapshot(profile)
+        val rights = completeRights ?: if (sync != null && System.currentTimeMillis() - sync.rightsCheckedAt < 6 * 3600_000L)
+            dao.rights(profile).first().associate { it.id to it.till } else null
+        return raw.mapNotNull { parseCatalogTitle(it) }.map { item ->
+            val previous = cached[item.id]
+            val merged = item.copy(description = item.description ?: previous?.description,
+                originalTitle = item.originalTitle ?: previous?.originalTitle,
+                poster = item.poster ?: previous?.poster, backdrop = item.backdrop ?: previous?.backdrop,
+                genres = item.genres.ifEmpty { previous?.genres.orEmpty() },
+                audio = item.audio.ifEmpty { previous?.audio.orEmpty() }, subtitles = item.subtitles.ifEmpty { previous?.subtitles.orEmpty() })
+            // Persisted rights contain known catalogue IDs only. A newly found
+            // server title with no full snapshot is unknown, never falsely locked.
+            val known = completeRights != null || item.id in cached || rights?.containsKey(item.id) == true
+            merged.copy(right = resolveViewingRight(merged, rights.takeIf { known }))
+        }
+    }
 }

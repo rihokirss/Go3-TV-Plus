@@ -21,6 +21,7 @@ data class CatalogTitle(
 }
 data class CatalogSeason(val id: String, val seriesId: String, val number: Int, val title: String)
 data class CatalogPage(val items: List<JsonObject>, val total: Int, val consumed: Int)
+data class CatalogSearchResult(val items: List<CatalogTitle>, val searching: Boolean, val offline: Boolean)
 data class CatalogRights(val ids: Map<String, Long?>, val checkedAt: Long = System.currentTimeMillis())
 data class CatalogProgress(val profileId: String, val contentId: String, val seriesId: String?, val positionMs: Long, val durationMs: Long, val updatedAt: Long, val completed: Boolean = false, val continueEligible: Boolean = true) {
     val watched get() = completed || (durationMs > 0 && positionMs.toDouble() / durationMs >= .95)

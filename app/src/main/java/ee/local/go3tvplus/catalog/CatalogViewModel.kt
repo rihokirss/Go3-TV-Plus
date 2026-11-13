@@ -4,31 +4,35 @@ import android.content.Context
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 
+private const val SEARCH_ERROR = "Otsing ebaõnnestus. Proovi uuesti."
+
 enum class CatalogSection(val label: String) { TV("Televisioon"), MOVIES("Filmid"), SERIES("Seriaalid"), SEARCH("Otsing"), LIST("Minu nimekiri"), SETTINGS("Seaded") }
 data class CatalogFilter(val kind: CatalogKind? = null, val genre: String? = null, val year: Int? = null, val allRights: Boolean = false, val sort: CatalogSort = CatalogSort.ADDED)
 data class CatalogScreenState(val key: String, val title: String, val detailId: String? = null, val grid: Boolean = false, val filter: CatalogFilter = CatalogFilter(), val group: String? = null)
 data class CatalogRow(val key: String, val title: String, val items: List<CatalogTitle>)
 data class CatalogUiState(
     val profile: String? = null, val visible: Boolean = false, val section: CatalogSection = CatalogSection.TV,
-    val menu: Boolean = true, val entry: Int = 0, val pages: List<CatalogScreenState> = emptyList(),
+    val menu: Boolean = true, val contentFocusPending: Boolean = false, val entry: Int = 0, val pages: List<CatalogScreenState> = emptyList(),
     val titles: List<CatalogTitle> = emptyList(), val list: List<String> = emptyList(), val progress: Map<String, CatalogProgress> = emptyMap(),
     val popularMovieIds: List<String> = emptyList(),
     val seasons: Map<String, List<CatalogSeason>> = emptyMap(), val completeSeasons: Set<String> = emptySet(), val selectedSeasons: Map<String, String> = emptyMap(),
-    val query: String = "", val searchIds: Set<String>? = null, val searching: Boolean = false,
+    val query: String = "", val searchIds: Set<String>? = null, val searchTitles: List<CatalogTitle>? = null,
+    val searching: Boolean = false, val searchOffline: Boolean = false,
     val loading: Boolean = false, val detailLoading: Boolean = false, val error: String? = null,
     val history: CatalogHistoryStatus = CatalogHistoryStatus(), val autoplay: Boolean = true, val next: CatalogTitle? = null, val countdown: Int? = null,
 ) {
     val page get() = pages.lastOrNull()
-    val detail get() = titles.firstOrNull { it.id == page?.detailId }
+    val detail get() = titles.firstOrNull { it.id == page?.detailId } ?: searchTitles?.firstOrNull { it.id == page?.detailId }
+    val isSearchPage get() = section == CatalogSection.SEARCH || pages.firstOrNull()?.key == CatalogSection.SEARCH.name
     fun progressFor(item: CatalogTitle): CatalogProgress? = if (item.kind == CatalogKind.SERIES) progress.values.filter { it.seriesId == item.id }.maxByOrNull { it.updatedAt } else progress[item.id]
     fun filtered(filter: CatalogFilter = page?.filter ?: CatalogFilter()): List<CatalogTitle> {
-        val candidates = titles.asSequence().filter { it.kind != CatalogKind.EPISODE }
+        val candidates = (if (isSearchPage) searchTitles ?: titles else titles).asSequence().filter { it.kind != CatalogKind.EPISODE }
             .filter { filter.kind == null || it.kind == filter.kind }
             .filter { filter.allRights || it.right == ViewingRight.AVAILABLE }
             .filter { filter.genre == null || filter.genre in it.genres }
             .filter { filter.year == null || it.year == filter.year }
             .filter { section != CatalogSection.LIST || it.id in list }
-            .filter { section != CatalogSection.SEARCH || searchIds == null || it.id in searchIds }
+            .filter { !isSearchPage || searchIds == null || it.id in searchIds }
         return when (filter.sort) { CatalogSort.ADDED -> candidates.sortedByDescending { it.added }; CatalogSort.TITLE -> { val collator = java.text.Collator.getInstance(java.util.Locale.forLanguageTag("et")); candidates.sortedWith { a, b -> collator.compare(a.title, b.title) } }; CatalogSort.YEAR -> candidates.sortedByDescending { it.year ?: 0 } }.toList()
     }
     fun seriesHasMore(series: CatalogTitle): Boolean {
@@ -92,12 +96,16 @@ class CatalogViewModel(private val repository: CatalogRepository, private val sc
     val focusedKeys = mutableMapOf<String, String>()
     var lastFocusAtNanos: Long = 0
         private set
-    fun recordFocus(page: String, key: String) {
+    fun recordFocus(page: String, key: String, restored: Boolean = false) {
+        // Android may temporarily focus a fallback while the destination composes.
+        // Preserve the remembered control until its explicit restoration completes.
+        if (snapshot.contentFocusPending && !restored) return
         if (diagnostics && browseOpenedAtNanos > 0 && page == snapshot.section.name) {
             android.util.Log.i("Go3Catalog", "cachedViewFocusMs=${(System.nanoTime() - browseOpenedAtNanos) / 1_000_000.0}")
             browseOpenedAtNanos = 0L
         }
         focusedKeys[page] = key
+        if (snapshot.page?.key == page) mutable.update { it.copy(menu = false, contentFocusPending = false) }
         lastFocusAtNanos = System.nanoTime()
         val inputAt = remoteInputAtNanos
         remoteInputAtNanos = 0L
@@ -121,20 +129,26 @@ class CatalogViewModel(private val repository: CatalogRepository, private val sc
             launch { repository.popularMovieIds(profile).collect { ids -> mutable.update { it.copy(popularMovieIds = ids) } } }
             launch { repository.observeTitles(profile).collect { values ->
                 mutable.update { it.copy(titles = values) }
-                if (snapshot.query.isNotBlank()) query(snapshot.query)
+                if (snapshot.query.isNotBlank()) search(snapshot.query, refresh = true)
             } }
             launch { repository.dao.watchlist(profile).collect { values -> mutable.update { it.copy(list = values.map { it.id }) } } }
             launch { repository.dao.progress(profile).collect { values -> mutable.update { it.copy(progress = values.associate { it.contentId to it.domain() }) } } }
         }
     }
-    fun openMenu() { mutable.update { it.copy(visible = true, menu = true) } }
-    fun contentFocus() { mutable.update { it.copy(menu = false) } }
+    fun openMenu() { mutable.update { it.copy(visible = true, menu = true, contentFocusPending = false) } }
+    fun menuFocused() {
+        // Removing an old grid/row can briefly leave the rail as Android's fallback.
+        // Only explicit navigation may interrupt the destination page's focus restore.
+        if (!snapshot.contentFocusPending) openMenu()
+    }
+    fun contentFocus() { mutable.update { it.copy(menu = false, contentFocusPending = false) } }
+    fun imagePrefetchAllowed() = repository.prefetchAllowed
     fun select(section: CatalogSection) {
-        if (section == CatalogSection.TV) { mutable.update { it.copy(visible = false, section = section, pages = emptyList()) }; onTv(); return }
-        if (section == CatalogSection.SETTINGS) { mutable.update { it.copy(visible = false, section = section) }; onSettings(); return }
+        if (section == CatalogSection.TV) { mutable.update { it.copy(visible = false, contentFocusPending = false, section = section, pages = emptyList()) }; onTv(); return }
+        if (section == CatalogSection.SETTINGS) { mutable.update { it.copy(visible = false, contentFocusPending = false, section = section) }; onSettings(); return }
         if (diagnostics) browseOpenedAtNanos = System.nanoTime()
         val kind = when(section) { CatalogSection.MOVIES -> CatalogKind.MOVIE; CatalogSection.SERIES -> CatalogKind.SERIES; else -> null }
-        mutable.update { it.copy(visible = true, menu = false, section = section, entry = it.entry + 1, pages = listOf(CatalogScreenState(section.name, section.label, grid = section == CatalogSection.SEARCH || section == CatalogSection.LIST, filter = CatalogFilter(kind = kind))), error = null) }
+        mutable.update { it.copy(visible = true, menu = false, contentFocusPending = true, section = section, entry = it.entry + 1, pages = listOf(CatalogScreenState(section.name, section.label, grid = section == CatalogSection.SEARCH || section == CatalogSection.LIST, filter = CatalogFilter(kind = kind))), error = null) }
         scope.launch {
             val profile = snapshot.profile ?: return@launch
             if (repository.needsRefresh(profile) && snapshot.profile == profile) refresh()
@@ -155,13 +169,13 @@ class CatalogViewModel(private val repository: CatalogRepository, private val sc
         if (snapshot.countdown != null) { cancelNext(); return true }
         if (!snapshot.visible) return false
         if (snapshot.pages.size > 1) {
-            detailJob?.cancel(); mutable.update { it.copy(pages = it.pages.dropLast(1), detailLoading = false, error = null) }
+            detailJob?.cancel(); mutable.update { it.copy(pages = it.pages.dropLast(1), menu = false, contentFocusPending = true, detailLoading = false, error = null) }
         } else if (!snapshot.menu) openMenu() else mutable.update { it.copy(visible = false) }
         return true
     }
     fun open(item: CatalogTitle) {
         val profile = snapshot.profile ?: return
-        mutable.update { it.copy(menu = false, pages = it.pages + CatalogScreenState("detail:${item.id}", item.title, detailId = item.id), error = null, detailLoading = true) }
+        mutable.update { it.copy(menu = false, contentFocusPending = true, pages = it.pages + CatalogScreenState("detail:${item.id}", item.title, detailId = item.id), error = null, detailLoading = true) }
         detailJob?.cancel()
         detailJob = scope.launch {
             try {
@@ -196,18 +210,33 @@ class CatalogViewModel(private val repository: CatalogRepository, private val sc
     }
     fun all(row: CatalogRow) {
         val old = snapshot.page ?: return
-        mutable.update { it.copy(pages = it.pages + CatalogScreenState("${old.key}/${row.key}", row.title, grid = true,
+        mutable.update { it.copy(menu = false, contentFocusPending = true, pages = it.pages + CatalogScreenState("${old.key}/${row.key}", row.title, grid = true,
             filter = old.filter.copy(genre = if (row.key.startsWith("genre:")) row.key.removePrefix("genre:") else old.filter.genre), group = row.key)) }
     }
     fun filter(value: CatalogFilter) { mutable.update { it.copy(pages = it.pages.dropLast(1) + (it.page?.copy(filter = value) ?: return@update it)) } }
-    fun query(text: String) {
+    fun query(text: String) = search(text, refresh = false)
+    private fun search(text: String, refresh: Boolean) {
+        val value = text.take(100)
+        if (!refresh && value == snapshot.query) return
         searchJob?.cancel(); val generation = ++searchGeneration
-        mutable.update { it.copy(query = text.take(100), searching = true) }
-        val profile = snapshot.profile ?: return
+        val profile = snapshot.profile
+        if (catalogSearchQuery(value) == null || profile == null) {
+            mutable.update { it.copy(query = value, searchIds = null, searchTitles = null, searching = false, searchOffline = false, error = it.error.takeUnless { message -> message == SEARCH_ERROR }) }
+            return
+        }
+        mutable.update { it.copy(query = value, searching = true, searchOffline = false, error = it.error.takeUnless { message -> message == SEARCH_ERROR }) }
         searchJob = scope.launch {
-            delay(300)
-            val ids = withContext(Dispatchers.Default) { repository.search(profile, text) }
-            if (generation == searchGeneration && snapshot.profile == profile) mutable.update { it.copy(searchIds = ids, searching = false) }
+            try {
+                delay(300)
+                repository.searchResults(profile, value).collect { result ->
+                    if (generation == searchGeneration && snapshot.profile == profile) mutable.update { it.copy(
+                        searchIds = result.items.mapTo(hashSetOf()) { title -> title.id }, searchTitles = result.items,
+                        searching = result.searching, searchOffline = result.offline) }
+                }
+            } catch (error: CancellationException) { throw error }
+            catch (_: Exception) {
+                if (generation == searchGeneration && snapshot.profile == profile) mutable.update { it.copy(searching = false, error = SEARCH_ERROR) }
+            }
         }
     }
     fun toggleList(item: CatalogTitle) {
@@ -268,8 +297,8 @@ class CatalogViewModel(private val repository: CatalogRepository, private val sc
         val row = ProgressEntity(profile, item.id, item.seriesId, position.coerceAtMost(duration), duration, System.currentTimeMillis())
         repository.persist(row)
     }
-    fun showDetails() { cancelNext(); mutable.update { it.copy(visible = true, menu = false) } }
-    fun fail(message: String?) { mutable.update { it.copy(visible = true, error = message ?: "Videot ei saa praegu avada", menu = false) } }
+    fun showDetails() { cancelNext(); mutable.update { it.copy(visible = true, menu = false, contentFocusPending = true) } }
+    fun fail(message: String?) { mutable.update { it.copy(visible = true, error = message ?: "Videot ei saa praegu avada", menu = false, contentFocusPending = it.contentFocusPending || !it.visible) } }
     fun ended(item: CatalogTitle) {
         if (!snapshot.autoplay || item.seriesId == null) return
         nextJob?.cancel()

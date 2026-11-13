@@ -18,6 +18,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import okhttp3.Call
+import okhttp3.Callback
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -84,6 +89,7 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
 
     private class ProfileSigningContext(val id: JsonElement, val name: String, val token: String)
     private val profileSigning = ConcurrentHashMap<String, ProfileSigningContext>()
+    private val profileKids = ConcurrentHashMap<String, Boolean>()
     @Volatile private var tier: String = "TIER_2"
     @Volatile private var subscriberId: String? = null
     @Volatile private var channelIds: List<String> = emptyList()
@@ -132,6 +138,7 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
         return subscriber.array("profiles").mapNotNull { element ->
             val item = element as? JsonObject ?: return@mapNotNull null
             val id = item.string("uid") ?: item.string("id") ?: return@mapNotNull null
+            profileKids[id] = item.bool("kids") ?: false
             item.string("token")?.let { signingToken ->
                 profileSigning[id] = ProfileSigningContext(item["id"] ?: JsonPrimitive(id), item.string("name") ?: "Profiil", signingToken)
             }
@@ -349,6 +356,38 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
 
     override suspend fun catalogDetail(accessToken: String, profileId: String, id: String): JsonObject =
         executeJson(request("products/vods/$id", token = accessToken, profileId = profileId)).jsonObject
+
+    override suspend fun catalogSearch(accessToken: String, profileId: String, query: String): List<JsonObject> {
+        if (!profileKids.containsKey(profileId)) profiles(accessToken)
+        val request = request("items/search", token = accessToken, profileId = profileId, query = listOf(
+            "keyword" to query, "clips" to "false", "episodes" to "false",
+            "kids" to (profileKids[profileId] == true).toString(), "tier" to tier))
+        val root = executeSearchJson(request).jsonObject
+        return root.array("items").mapNotNull { it as? JsonObject }.filter { it.string("type") in setOf("VOD", "SERIAL") }
+    }
+
+    /** Search can be superseded by the very next keystroke; cancel the HTTP call too. */
+    private suspend fun executeSearchJson(request: Request): JsonElement = withContext(Dispatchers.Default) {
+        val raw = suspendCancellableCoroutine<RawResponse> { continuation ->
+            val call = client.newCall(request)
+            call.timeout().timeout(4, TimeUnit.SECONDS)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, error: IOException) {
+                    if (continuation.isActive) continuation.resumeWithException(Go3Failure.Unavailable("Go3 võrguotsing ebaõnnestus", error))
+                }
+                override fun onResponse(call: Call, response: Response) {
+                    try {
+                        val result = response.use { RawResponse(it.code, it.header("Content-Type").orEmpty(), it.body.string()) }
+                        if (continuation.isActive) continuation.resume(result)
+                    } catch (error: Exception) {
+                        if (continuation.isActive) continuation.resumeWithException(error)
+                    }
+                }
+            })
+        }
+        parseJson(raw)
+    }
 
     override suspend fun catalogPopularMovies(accessToken: String, profileId: String): List<JsonObject> {
         if (subscriberId == null) profiles(accessToken)

@@ -25,6 +25,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -46,6 +49,11 @@ private val Muted = NavigationStyle.Muted
 private val Accent = NavigationStyle.Accent
 private val Shape = NavigationStyle.Shape
 private val LocalContentAutofocus = staticCompositionLocalOf { true }
+private val LocalBrowseRestoreTarget = staticCompositionLocalOf<String?> { null }
+
+private class CatalogContentFocus {
+    var request: (() -> Boolean)? = null
+}
 
 @Composable
 fun CatalogOverlay(model: CatalogViewModel) {
@@ -54,7 +62,7 @@ fun CatalogOverlay(model: CatalogViewModel) {
     BackHandler(state.visible) { model.back() }
     if (state.visible) {
         val menuFocus = remember { FocusRequester() }
-        val contentFocus = remember { FocusRequester() }
+        val contentFocus = remember { CatalogContentFocus() }
         var hero by remember { mutableStateOf<CatalogTitle?>(null) }
         var background by remember { mutableStateOf<CatalogTitle?>(null) }
         LaunchedEffect(hero?.id) { delay(140); background = hero }
@@ -79,11 +87,13 @@ fun CatalogOverlay(model: CatalogViewModel) {
                     CatalogSection.entries.forEach { section ->
                         val selected = state.section == section
                         Button(onClick = { model.select(section) },
-                            modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) model.openMenu() }.then(if (selected || (isTvMenu && section == CatalogSection.TV)) Modifier.focusRequester(menuFocus) else Modifier)
+                            modifier = Modifier.testTag("catalog-menu:${section.name}").fillMaxWidth().focusProperties { canFocus = !state.contentFocusPending || state.menu }
+                                .onFocusChanged { if (it.isFocused) model.menuFocused() }.then(if (selected || (isTvMenu && section == CatalogSection.TV)) Modifier.focusRequester(menuFocus) else Modifier)
                                 .onPreviewKeyEvent {
                                     val event = it.nativeKeyEvent
                                     if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT && page != null) {
-                                        model.contentFocus(); contentFocus.requestFocus(); true
+                                        if (contentFocus.request?.invoke() == true) model.contentFocus()
+                                        true
                                     } else false
                                 },
                             colors = ButtonDefaults.colors(containerColor = if (selected) Color.White.copy(alpha = .1f) else Color.Transparent,
@@ -96,9 +106,9 @@ fun CatalogOverlay(model: CatalogViewModel) {
                 }
                 if (page != null) saved.SaveableStateProvider(page.key) {
                     CompositionLocalProvider(LocalContentAutofocus provides !state.menu) {
-                    Column(Modifier.weight(1f).fillMaxHeight().focusRequester(contentFocus).focusGroup()) {
-                        if (page.detailId != null) DetailContent(model, state, menuFocus) { hero = it }
-                        else BrowseContent(model, state, menuFocus) { hero = it }
+                    Column(Modifier.weight(1f).fillMaxHeight().focusGroup()) {
+                        if (page.detailId != null) DetailContent(model, state, menuFocus, contentFocus) { hero = it }
+                        else BrowseContent(model, state, menuFocus, contentFocus) { hero = it }
                     }
                     }
                 }
@@ -121,43 +131,98 @@ fun CatalogOverlay(model: CatalogViewModel) {
 private fun rememberSaveableStateHolderCompat() = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
 
 @Composable
-private fun BrowseContent(model: CatalogViewModel, state: CatalogUiState, menu: FocusRequester, focus: (CatalogTitle) -> Unit) {
+private fun BrowseContent(model: CatalogViewModel, state: CatalogUiState, menu: FocusRequester, contentFocus: CatalogContentFocus, focus: (CatalogTitle) -> Unit) {
     val page = state.page ?: return
-    val focusTargets = remember(page.key) { mutableMapOf<String, FocusRequester>() }
-    LaunchedEffect(state.entry, state.menu) {
-        if (!state.menu) { delay(30); (focusTargets[model.focusedKeys[page.key]] ?: focusTargets.values.firstOrNull())?.requestFocus() }
+    val focusTargets = remember(page.key) { mutableStateMapOf<String, FocusRequester>() }
+    val loadedRows by produceState<List<CatalogRow>?>(null, state.titles, state.progress, state.list, state.popularMovieIds, page.filter, state.section, page.grid) {
+        value = if (page.grid) emptyList() else withContext(Dispatchers.Default) { state.rows() }
     }
-    val rows by produceState<List<CatalogRow>>(emptyList(), state.titles, state.progress, state.list, state.popularMovieIds, page.filter, state.section) {
-        value = withContext(Dispatchers.Default) { state.rows() }
-    }
-    val filtered by produceState<List<CatalogTitle>>(emptyList(), state.titles, state.list, state.popularMovieIds, state.searchIds, page.filter, page.group, state.progress) {
+    val loadedItems by produceState<List<CatalogTitle>?>(null, state.titles, state.list, state.popularMovieIds, state.searchIds, state.searchTitles, page.filter, page.group, state.progress) {
         value = withContext(Dispatchers.Default) { state.browseItems() }
     }
+    val rows = loadedRows.orEmpty()
+    val filtered = loadedItems.orEmpty()
+    val ready = loadedItems != null && (page.grid || loadedRows != null)
+    val remembered = model.focusedKeys[page.key]
+    val rememberedRow = rows.indexOfFirst { row ->
+        remembered == "${row.key}:all" || row.items.take(24).any { remembered == "${row.key}:${it.id}" }
+    }
+    val rememberedGrid = filtered.indexOfFirst { remembered == "grid:${it.id}" }
+    // A remembered card can exist outside the composed viewport. Keep waiting
+    // for that stable ID instead of replacing it with the first visible card.
+    val restoreKey = remembered?.takeIf {
+        !ready || it == "search" || it.startsWith("filter:") ||
+            (if (page.grid) rememberedGrid >= 0 else rememberedRow >= 0)
+    }
+    val initialFocusKey = when {
+        page.key == CatalogSection.SEARCH.name -> "search"
+        page.grid -> filtered.getOrNull((model.scrollPositions[page.key + ":grid"]?.first ?: 0).coerceAtMost(filtered.lastIndex).coerceAtLeast(0))?.let { "grid:${it.id}" }
+        else -> rows.getOrNull((model.scrollPositions[page.key + ":rows"]?.first ?: 0).coerceAtMost(rows.lastIndex).coerceAtLeast(0))?.let { row ->
+            val index = (model.scrollPositions[page.key + ":" + row.key]?.first ?: 0).coerceAtMost(minOf(row.items.size, 24))
+            row.items.take(24).getOrNull(index)?.let { "${row.key}:${it.id}" } ?: "${row.key}:all"
+        }
+    }
+    BindContentFocus(model, page.key, focusTargets, contentFocus, restoreKey ?: initialFocusKey)
+    val availableFocusTargets = focusTargets.toMap()
+    LaunchedEffect(state.contentFocusPending, state.loading, state.searching, rows, filtered, availableFocusTargets, initialFocusKey, restoreKey, ready) {
+        if (state.contentFocusPending && !state.menu && ready) {
+            delay(30)
+            // Wait for the destination's asynchronous rows/grid, not the rail's
+            // automatic fallback. An empty catalogue can still focus its filters.
+            val empty = withContext(Dispatchers.Default) { if (page.grid) state.browseItems().isEmpty() else state.rows().isEmpty() }
+            val target = preferredContentFocus(model, page.key, availableFocusTargets, empty && !state.loading && !state.searching, restoreKey ?: initialFocusKey)
+            withContext(Dispatchers.Main.immediate) {
+                if (model.state.value.page?.key == page.key && model.state.value.contentFocusPending && !model.state.value.menu) target?.let { requestCatalogFocus(model, page.key, it.first, it.second) }
+            }
+        }
+    }
     var focused by remember { mutableStateOf<CatalogTitle?>(null) }
-    val active = focused ?: filtered.firstOrNull()
+    var focusedRow by remember { mutableStateOf<String?>(null) }
+    val active = focused ?: filtered.firstOrNull { remembered == "grid:${it.id}" || remembered?.endsWith(":${it.id}") == true } ?: filtered.firstOrNull()
     LaunchedEffect(active?.id) { active?.let(focus) }
+    CompositionLocalProvider(LocalBrowseRestoreTarget provides (restoreKey ?: initialFocusKey).takeIf { state.contentFocusPending && !state.menu }) {
     Column(Modifier.fillMaxSize()) {
         if (page.grid) {
             Column(Modifier.padding(horizontal = 32.dp, vertical = 16.dp)) {
-                Text(page.title, color = Color.White, fontSize = 27.sp, fontWeight = FontWeight.Bold)
-                if (state.section == CatalogSection.SEARCH) SearchField(state.query, model::query, model.focusedKeys[page.key] == null || model.focusedKeys[page.key] == "search", focusTargets) { model.recordFocus(page.key, "search") }
-                Filters(model, state)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(page.title, color = Color.White, fontSize = 27.sp, fontWeight = FontWeight.Bold)
+                    if (state.isSearchPage) Text(if (state.searching) "Otsin…" else if (filtered.size == 1) "1 tulemus" else "${filtered.size} tulemust", color = Muted, fontSize = 12.sp, modifier = Modifier.testTag("catalog-search-count"))
+                }
+                if (state.isSearchPage) SearchField(state.query, model::query, focusTargets) { model.recordFocus(page.key, "search") }
+                Filters(model, state, menu, focusTargets)
                 Status(state, model)
             }
-            val saved = model.scrollPositions[page.key + ":grid"]
-            val scroll = rememberLazyGridState(saved?.first ?: 0, saved?.second ?: 0)
-            LaunchedEffect(scroll) { snapshotFlow { scroll.firstVisibleItemIndex to scroll.firstVisibleItemScrollOffset }.distinctUntilChanged().collect { model.scrollPositions[page.key + ":grid"] = it } }
-            LazyVerticalGrid(GridCells.Fixed(5), state = scroll, contentPadding = PaddingValues(start = 32.dp, end = 32.dp, bottom = 30.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.weight(1f)) {
-                itemsIndexed(filtered, key = { _, it -> it.id }) { index, item ->
-                    Poster(model, page.key, "grid:${item.id}", item, state.progressFor(item), index % 5 == 0, menu, focusTargets,
-                        initial = state.section != CatalogSection.SEARCH && index == (saved?.first ?: 0), onFocus = { focused = item }, onClick = { model.open(item) })
+            if (ready) {
+                val saved = model.scrollPositions[page.key + ":grid"]
+                val scroll = remember(page.key) { LazyGridState(saved?.first ?: 0, saved?.second ?: 0) }
+                LaunchedEffect(scroll) { snapshotFlow { scroll.firstVisibleItemIndex to scroll.firstVisibleItemScrollOffset }.distinctUntilChanged().collect { if (model.state.value.page?.key == page.key && !model.state.value.contentFocusPending) model.scrollPositions[page.key + ":grid"] = it } }
+                LaunchedEffect(state.contentFocusPending, rememberedGrid) {
+                    if (state.contentFocusPending && rememberedGrid >= 0 && scroll.layoutInfo.visibleItemsInfo.none { it.index == rememberedGrid }) scroll.scrollToItem(rememberedGrid)
                 }
-                if (filtered.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) { EmptyCatalog(state) }
+                val upcoming by remember(scroll, filtered) { derivedStateOf {
+                    val last = scroll.layoutInfo.visibleItemsInfo.maxOfOrNull { it.index } ?: -1
+                    if (last < 0) emptyList() else filtered.drop(last + 1).take(2)
+                } }
+                PrefetchCatalogPosters(upcoming, model)
+                LazyVerticalGrid(GridCells.Fixed(5), state = scroll, contentPadding = PaddingValues(start = 32.dp, end = 32.dp, bottom = 30.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.weight(1f)) {
+                    itemsIndexed(filtered, key = { _, it -> it.id }) { index, item ->
+                        Poster(model, page.key, "grid:${item.id}", item, state.progressFor(item), index % 5 == 0, menu, focusTargets,
+                            onFocus = { focused = item }, onClick = {
+                                model.recordFocus(page.key, "grid:${item.id}")
+                                model.scrollPositions[page.key + ":grid"] = scroll.firstVisibleItemIndex to scroll.firstVisibleItemScrollOffset
+                                model.open(item)
+                            })
+                    }
+                    if (filtered.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) { EmptyCatalog(state) }
+                }
             }
-        } else {
+        } else if (ready) {
             val saved = model.scrollPositions[page.key + ":rows"]
-            val scroll = rememberLazyListState(saved?.first ?: 0, saved?.second ?: 0)
-            LaunchedEffect(scroll) { snapshotFlow { scroll.firstVisibleItemIndex to scroll.firstVisibleItemScrollOffset }.distinctUntilChanged().collect { model.scrollPositions[page.key + ":rows"] = it } }
+            val scroll = remember(page.key) { LazyListState(saved?.first ?: 0, saved?.second ?: 0) }
+            LaunchedEffect(scroll) { snapshotFlow { scroll.firstVisibleItemIndex to scroll.firstVisibleItemScrollOffset }.distinctUntilChanged().collect { if (model.state.value.page?.key == page.key && !model.state.value.contentFocusPending) model.scrollPositions[page.key + ":rows"] = it } }
+            LaunchedEffect(state.contentFocusPending, rememberedRow) {
+                if (state.contentFocusPending && rememberedRow >= 0 && scroll.layoutInfo.visibleItemsInfo.none { it.index == rememberedRow }) scroll.scrollToItem(rememberedRow)
+            }
             Column(Modifier.fillMaxWidth().heightIn(min = 150.dp).padding(start = 32.dp, end = 105.dp, top = 25.dp, bottom = 8.dp)) {
                 Text(page.title.uppercase(), color = Accent, fontSize = 11.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(9.dp))
@@ -165,22 +230,42 @@ private fun BrowseContent(model: CatalogViewModel, state: CatalogUiState, menu: 
                 Text(active?.let(::metadata).orEmpty(), color = Muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 7.dp))
                 Text(active?.description.orEmpty(), color = Color.White.copy(alpha = .8f), fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 19.sp)
             }
-            Column(Modifier.padding(horizontal = 32.dp)) { Status(state, model); Filters(model, state) }
+            Column(Modifier.padding(horizontal = 32.dp)) { Status(state, model); Filters(model, state, menu, focusTargets) }
             LazyColumn(state = scroll, contentPadding = PaddingValues(top = 12.dp, bottom = 25.dp), verticalArrangement = Arrangement.spacedBy(19.dp), modifier = Modifier.weight(1f)) {
                 items(rows, key = { it.key }) { row ->
                     Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                         Text(row.title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 32.dp))
                         val rowKey = page.key + ":" + row.key
                         val position = model.scrollPositions[rowKey]
-                        val rowScroll = rememberLazyListState(position?.first ?: 0, position?.second ?: 0)
-                        LaunchedEffect(rowScroll) { snapshotFlow { rowScroll.firstVisibleItemIndex to rowScroll.firstVisibleItemScrollOffset }.distinctUntilChanged().collect { model.scrollPositions[rowKey] = it } }
+                        val rowScroll = remember(rowKey) { LazyListState(position?.first ?: 0, position?.second ?: 0) }
+                        LaunchedEffect(rowScroll) { snapshotFlow { rowScroll.firstVisibleItemIndex to rowScroll.firstVisibleItemScrollOffset }.distinctUntilChanged().collect { if (model.state.value.page?.key == page.key && !model.state.value.contentFocusPending) model.scrollPositions[rowKey] = it } }
+                        val restoreIndex = if (restoreKey == "${row.key}:all") minOf(row.items.size, 24)
+                            else row.items.take(24).indexOfFirst { restoreKey == "${row.key}:${it.id}" }
+                        LaunchedEffect(state.contentFocusPending, restoreIndex) {
+                            if (state.contentFocusPending && restoreIndex >= 0 && rowScroll.layoutInfo.visibleItemsInfo.none { it.index == restoreIndex }) rowScroll.scrollToItem(restoreIndex)
+                        }
+                        fun savePosition() {
+                            model.scrollPositions[page.key + ":rows"] = scroll.firstVisibleItemIndex to scroll.firstVisibleItemScrollOffset
+                            model.scrollPositions[rowKey] = rowScroll.firstVisibleItemIndex to rowScroll.firstVisibleItemScrollOffset
+                        }
+                        if (focusedRow == row.key || (focusedRow == null && row.key == rows.firstOrNull()?.key)) {
+                            val upcoming by remember(rowScroll, row.items) { derivedStateOf {
+                                val last = rowScroll.layoutInfo.visibleItemsInfo.maxOfOrNull { it.index } ?: -1
+                                if (last < 0) emptyList() else row.items.take(24).drop(last + 1).take(2)
+                            } }
+                            PrefetchCatalogPosters(upcoming, model)
+                        }
                         LazyRow(state = rowScroll, contentPadding = PaddingValues(horizontal = 32.dp, vertical = 7.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                             itemsIndexed(row.items.take(24), key = { _, item -> item.id }) { index, item ->
                                 Poster(model, page.key, "${row.key}:${item.id}", item, state.progressFor(item), index == 0, menu, focusTargets,
-                                    initial = row.key == rows.firstOrNull()?.key && index == 0, onFocus = { focused = item }, onClick = { model.open(item) })
+                                    onFocus = { focused = item; focusedRow = row.key }, onClick = {
+                                        model.recordFocus(page.key, "${row.key}:${item.id}")
+                                        savePosition()
+                                        model.open(item)
+                                    })
                             }
                             item(key = "all") {
-                                Button(onClick = { model.all(row) }, modifier = restoredCatalogFocus(model, page.key, "${row.key}:all", targets = focusTargets).width(116.dp).height(157.dp),
+                                Button(onClick = { model.recordFocus(page.key, "${row.key}:all"); savePosition(); model.all(row) }, modifier = restoredCatalogFocus(model, page.key, "${row.key}:all", targets = focusTargets).width(116.dp).height(157.dp),
                                     shape = ButtonDefaults.shape(shape = Shape), scale = ButtonDefaults.scale(focusedScale = 1f),
                                     colors = ButtonDefaults.colors(containerColor = Color.White.copy(alpha = .09f), contentColor = Muted, focusedContainerColor = Color.White, focusedContentColor = Ink)) {
                                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Vaata kõiki", fontSize = 15.sp); Text("${row.items.size} teost", fontSize = 12.sp) }
@@ -193,40 +278,49 @@ private fun BrowseContent(model: CatalogViewModel, state: CatalogUiState, menu: 
             }
         }
     }
+    }
 }
 
 @Composable
-private fun SearchField(query: String, change: (String) -> Unit, initial: Boolean, targets: MutableMap<String, FocusRequester>, focused: () -> Unit) {
+private fun SearchField(query: String, change: (String) -> Unit, targets: MutableMap<String, FocusRequester>, focused: () -> Unit) {
     val keyboard = LocalSoftwareKeyboardController.current
     val requester = remember { FocusRequester() }
     val focus = LocalFocusManager.current
-    val allowAutofocus = LocalContentAutofocus.current
+    val restoring = LocalBrowseRestoreTarget.current
     RegisterCatalogFocus(targets, "search", requester)
-    LaunchedEffect(Unit) { if (allowAutofocus && initial) { delay(30); requester.requestFocus() } }
     DisposableEffect(Unit) { onDispose { keyboard?.hide() } }
     BasicTextField(query, change, singleLine = true, cursorBrush = SolidColor(Accent), textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 18.sp),
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
         keyboardActions = KeyboardActions(onSearch = { keyboard?.hide(); focus.moveFocus(FocusDirection.Down) }),
-        modifier = Modifier.fillMaxWidth().padding(top = 12.dp).background(Color.White.copy(alpha = .09f), Shape).border(1.dp, Color.White.copy(alpha = .25f), Shape)
-            .focusRequester(requester).onFocusChanged { if (it.isFocused) { focused(); keyboard?.show() } }.padding(14.dp),
+        modifier = Modifier.testTag("catalog-search-input").fillMaxWidth().padding(top = 12.dp).background(Color.White.copy(alpha = .09f), Shape).border(1.dp, Color.White.copy(alpha = .25f), Shape)
+            .focusProperties { canFocus = restoring == null || restoring == "search" }.focusRequester(requester).onFocusChanged { if (it.isFocused) { focused(); keyboard?.show() } }.padding(14.dp),
         decorationBox = { inner -> Box { if (query.isEmpty()) Text("Otsi pealkirja või algpealkirja…", color = Muted, fontSize = 17.sp); inner() } })
 }
 
 @Composable
-private fun Filters(model: CatalogViewModel, state: CatalogUiState) {
+private fun Filters(model: CatalogViewModel, state: CatalogUiState, menu: FocusRequester, focusTargets: MutableMap<String, FocusRequester>) {
     val filter = state.page?.filter ?: return
+    val page = state.page ?: return
     var choosing by remember { mutableStateOf<String?>(null) }
-    val choices by produceState<List<CatalogTitle>>(emptyList(), state.titles, state.list, state.section, state.searchIds, state.popularMovieIds, state.page?.group, filter, state.progress) {
+    val choices by produceState<List<CatalogTitle>>(emptyList(), state.titles, state.list, state.section, state.searchIds, state.searchTitles, state.popularMovieIds, state.page?.group, filter, state.progress) {
         value = withContext(Dispatchers.Default) { state.browseItems(filter.copy(genre = null, year = null)) }
     }
     val genres = remember(choices) { choices.flatMap { it.genres }.distinct().sorted() }
     val years = remember(choices) { choices.mapNotNull { it.year }.distinct().sortedDescending() }
+    @Composable fun control(key: String, label: String, click: () -> Unit) {
+        FilterButton(label, click, restoredCatalogFocus(model, page.key, "filter:$key", targets = focusTargets)
+            .onPreviewKeyEvent {
+                if (key == "rights" && it.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+                    model.openMenu(); menu.requestFocus(); true
+                } else false
+            })
+    }
     LazyRow(horizontalArrangement = Arrangement.spacedBy(9.dp), contentPadding = PaddingValues(vertical = 6.dp)) {
-        item { FilterButton(if (filter.allRights) "Kogu kataloog" else "Minu pakett") { model.filter(filter.copy(allRights = !filter.allRights)) } }
-        if (state.page?.grid == true) item { FilterButton(when(filter.kind) { CatalogKind.MOVIE -> "Filmid"; CatalogKind.SERIES -> "Seriaalid"; else -> "Filmid ja seriaalid" }) { choosing = "kind" } }
-        item { FilterButton(filter.genre ?: "Kõik žanrid") { choosing = "genre" } }
-        item { FilterButton(filter.year?.toString() ?: "Kõik aastad") { choosing = "year" } }
-        if (state.page?.group != "popular") item { FilterButton(filter.sort.label) { choosing = "sort" } }
+        item { control("rights", if (filter.allRights) "Kogu kataloog" else "Minu pakett") { model.filter(filter.copy(allRights = !filter.allRights)) } }
+        if (state.page?.grid == true) item { control("kind", when(filter.kind) { CatalogKind.MOVIE -> "Filmid"; CatalogKind.SERIES -> "Seriaalid"; else -> "Filmid ja seriaalid" }) { choosing = "kind" } }
+        item { control("genre", filter.genre ?: "Kõik žanrid") { choosing = "genre" } }
+        item { control("year", filter.year?.toString() ?: "Kõik aastad") { choosing = "year" } }
+        if (state.page?.group != "popular") item { control("sort", filter.sort.label) { choosing = "sort" } }
     }
     if (choosing != null) {
         val options: List<Pair<String, () -> Unit>> = when(choosing) {
@@ -244,39 +338,49 @@ private fun Filters(model: CatalogViewModel, state: CatalogUiState) {
         }
     }
 }
-@Composable private fun FilterButton(label: String, click: () -> Unit) {
-    Button(onClick = click, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), scale = ButtonDefaults.scale(focusedScale = 1f), colors = ButtonDefaults.colors(containerColor = Color.White.copy(alpha = .09f), contentColor = Muted)) { Text(label, fontSize = 11.sp) }
+@Composable private fun FilterButton(label: String, click: () -> Unit, modifier: Modifier = Modifier) {
+    Button(onClick = click, modifier = modifier, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), scale = ButtonDefaults.scale(focusedScale = 1f), colors = ButtonDefaults.colors(containerColor = Color.White.copy(alpha = .09f), contentColor = Muted)) { Text(label, fontSize = 11.sp) }
 }
 @Composable private fun Status(state: CatalogUiState, model: CatalogViewModel) {
     if (state.error != null) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(bottom = 8.dp)) {
         Text(state.error, color = Color(0xFFFFC9AD), fontSize = 12.sp, modifier = Modifier.weight(1f))
         FilterButton("Proovi uuesti", model::refresh)
     } else if (state.history.error != null) Text(state.history.error, color = Muted, fontSize = 11.sp)
-    else if (state.loading || state.searching) Text(if (state.searching) "Otsin…" else "Värskendan valikut…", color = Muted, fontSize = 11.sp)
+    else if (state.isSearchPage && state.searchOffline) Text("Võrguotsing pole praegu saadaval. Näitan salvestatud tulemusi.", color = Muted, fontSize = 11.sp)
+    else if (state.loading || (state.searching && !state.isSearchPage)) Text(if (state.searching && !state.isSearchPage) "Otsin…" else "Värskendan valikut…", color = Muted, fontSize = 11.sp)
 }
 @Composable private fun EmptyCatalog(state: CatalogUiState) {
     Text(when { state.error != null -> "Salvestatud valik on siin ka ühenduse taastumiseni."; state.loading -> "Laadin esimest valikut…"; state.section == CatalogSection.LIST -> "Lisa lemmikud teose detailvaates oma nimekirja."; state.section == CatalogSection.SEARCH -> "Selle otsingu ja filtritega teoseid ei leitud."; else -> "Selle filtriga teoseid ei leitud. Proovi kogu kataloogi või värskenda valikut." }, color = Muted, fontSize = 16.sp, modifier = Modifier.padding(vertical = 30.dp))
 }
 
 @Composable
-private fun Poster(model: CatalogViewModel, page: String, key: String, item: CatalogTitle, progress: CatalogProgress?, first: Boolean, menu: FocusRequester, targets: MutableMap<String, FocusRequester>, initial: Boolean, onFocus: () -> Unit, onClick: () -> Unit) {
+private fun Poster(model: CatalogViewModel, page: String, key: String, item: CatalogTitle, progress: CatalogProgress?, first: Boolean, menu: FocusRequester, targets: MutableMap<String, FocusRequester>, onFocus: () -> Unit, onClick: () -> Unit) {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val width = with(density) { 116.dp.roundToPx() }
+    val height = with(density) { 157.dp.roundToPx() }
+    val image = remember(item.poster, width, height) { catalogPosterRequest(context, item.poster, width, height) }
     val requester = remember { FocusRequester() }
     RegisterCatalogFocus(targets, key, requester)
     var focused by remember { mutableStateOf(false) }
-    val lastKey = model.focusedKeys[page]
-    val allowAutofocus = LocalContentAutofocus.current
-    LaunchedEffect(Unit) { if (allowAutofocus && (lastKey == key || (lastKey == null && initial))) { delay(30); requester.requestFocus(); model.contentFocus() } }
-    Column(Modifier.width(116.dp).focusRequester(requester).onFocusChanged {
+    val restoring = LocalBrowseRestoreTarget.current
+    Column(Modifier.testTag("catalog-poster:$page:$key").width(116.dp).focusProperties { canFocus = restoring == null || restoring == key }.focusRequester(requester).onFocusChanged {
         focused = it.isFocused
-        if (it.isFocused) { model.recordFocus(page, key); model.contentFocus(); onFocus() }
+        if (it.isFocused) { model.recordFocus(page, key); onFocus() }
     }.onPreviewKeyEvent {
         if (first && it.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_LEFT) { model.openMenu(); menu.requestFocus(); true } else false
     }.clickable(onClick = onClick), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Box(Modifier.width(116.dp).height(157.dp).clip(Shape).background(Color(0xFF202839)).then(if (focused) Modifier.border(3.dp, Color.White, Shape) else Modifier)) {
+        Box(Modifier.width(116.dp).height(157.dp).clip(Shape).background(Color(0xFF202839))) {
             Text(item.title, color = Muted, fontSize = 14.sp, modifier = Modifier.align(Alignment.Center).padding(12.dp), maxLines = 5)
-            AsyncImage(item.poster, item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            AsyncImage(image, item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             if (item.right != ViewingRight.AVAILABLE) Text(when(item.right) { ViewingRight.LOCKED -> "🔒"; ViewingRight.EXPIRED -> "AEGUNUD"; else -> "?" }, color = Color.White, fontSize = 14.sp, modifier = Modifier.align(Alignment.TopEnd).padding(7.dp).background(Ink.copy(alpha = .8f), RoundedCornerShape(4.dp)).padding(5.dp))
             if (progress != null) ProgressBar(progress.fraction, Modifier.align(Alignment.BottomStart))
+            if (focused) {
+                // Dark separation on both sides keeps the white outline visible
+                // against white artwork as well as the dark page background.
+                Box(Modifier.matchParentSize().border(6.dp, Ink, Shape))
+                Box(Modifier.matchParentSize().padding(2.dp).border(2.dp, Color.White, RoundedCornerShape(8.dp)))
+            }
         }
         Text(item.title, color = if (focused) Color.White else Muted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 16.sp)
     }
@@ -287,9 +391,11 @@ private fun Poster(model: CatalogViewModel, page: String, key: String, item: Cat
 private fun metadata(item: CatalogTitle): String = listOfNotNull(item.year?.toString(), item.age?.let { "$it+" }, item.durationSeconds?.takeIf { it > 0 }?.let { "${it / 60} min" }, item.genres.firstOrNull()).joinToString("   ·   ")
 
 @Composable
-private fun DetailContent(model: CatalogViewModel, state: CatalogUiState, menu: FocusRequester, focus: (CatalogTitle) -> Unit) {
+private fun DetailContent(model: CatalogViewModel, state: CatalogUiState, menu: FocusRequester, contentFocus: CatalogContentFocus, focus: (CatalogTitle) -> Unit) {
     val item = state.detail ?: return
     val page = state.page ?: return
+    val focusTargets = remember(page.key) { mutableMapOf<String, FocusRequester>() }
+    BindContentFocus(model, page.key, focusTargets, contentFocus)
     val position = model.scrollPositions[page.key]
     val scroll = rememberLazyListState(position?.first ?: 0, position?.second ?: 0)
     LaunchedEffect(scroll) { snapshotFlow { scroll.firstVisibleItemIndex to scroll.firstVisibleItemScrollOffset }.distinctUntilChanged().collect { model.scrollPositions[page.key] = it } }
@@ -307,9 +413,9 @@ private fun DetailContent(model: CatalogViewModel, state: CatalogUiState, menu: 
         }
         item {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(vertical = 4.dp)) {
-                item { Button(onClick = { model.play(item) }, modifier = restoredCatalogFocus(model, page.key, "play", initial = true).onPreviewKeyEvent { if (it.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_LEFT) { model.openMenu(); menu.requestFocus(); true } else false }) { Text(if (progress != null && !progress.watched && progress.positionMs > 0) "Jätka" else "Vaata") } }
-                item { Button(onClick = { model.play(item, true) }, modifier = restoredCatalogFocus(model, page.key, "restart")) { Text("Alusta algusest") } }
-                item { Button(onClick = { model.toggleList(item) }, modifier = restoredCatalogFocus(model, page.key, "list")) { Text(if (item.id in state.list) "Eemalda nimekirjast" else "+ Minu nimekiri") } }
+                item { Button(onClick = { model.play(item) }, modifier = restoredCatalogFocus(model, page.key, "play", initial = true, targets = focusTargets).onPreviewKeyEvent { if (it.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_LEFT) { model.openMenu(); menu.requestFocus(); true } else false }) { Text(if (progress != null && !progress.watched && progress.positionMs > 0) "Jätka" else "Vaata") } }
+                item { Button(onClick = { model.play(item, true) }, modifier = restoredCatalogFocus(model, page.key, "restart", targets = focusTargets)) { Text("Alusta algusest") } }
+                item { Button(onClick = { model.toggleList(item) }, modifier = restoredCatalogFocus(model, page.key, "list", targets = focusTargets)) { Text(if (item.id in state.list) "Eemalda nimekirjast" else "+ Minu nimekiri") } }
             }
         }
         item { Status(state, model) }
@@ -317,13 +423,14 @@ private fun DetailContent(model: CatalogViewModel, state: CatalogUiState, menu: 
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(9.dp), contentPadding = PaddingValues(vertical = 8.dp)) {
                     items(state.seasons[item.id].orEmpty(), key = { it.id }) { season ->
-                        Button(onClick = { model.selectSeason(item.id, season.id) }, modifier = restoredCatalogFocus(model, page.key, "season:${season.id}"), colors = ButtonDefaults.colors(containerColor = if (state.selectedSeasons[item.id] == season.id) Color.White.copy(alpha = .2f) else Color.White.copy(alpha = .07f))) { Text(if (season.number > 0) "${season.number}. hooaeg" else season.title) }
+                        Button(onClick = { model.selectSeason(item.id, season.id) }, modifier = restoredCatalogFocus(model, page.key, "season:${season.id}", targets = focusTargets), colors = ButtonDefaults.colors(containerColor = if (state.selectedSeasons[item.id] == season.id) Color.White.copy(alpha = .2f) else Color.White.copy(alpha = .07f))) { Text(if (season.number > 0) "${season.number}. hooaeg" else season.title) }
                     }
                 }
             }
             items(episodes, key = { it.id }) { episode ->
                 val episodeFocus = remember { FocusRequester() }
-                LaunchedEffect(Unit) { if (!state.menu && model.focusedKeys[page.key] == episode.id) { delay(30); episodeFocus.requestFocus() } }
+                RegisterCatalogFocus(focusTargets, episode.id, episodeFocus)
+                LaunchedEffect(Unit) { if (!state.menu && model.focusedKeys[page.key] == episode.id) { delay(30); if (model.state.value.contentFocusPending) requestCatalogFocus(model, page.key, episode.id, episodeFocus) } }
                 val p = state.progress[episode.id]
                 Button(onClick = { model.play(episode) }, modifier = Modifier.fillMaxWidth().focusRequester(episodeFocus).onFocusChanged { if (it.isFocused) model.recordFocus(page.key, episode.id) }, scale = ButtonDefaults.scale(focusedScale = 1.01f), contentPadding = PaddingValues(0.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -337,7 +444,7 @@ private fun DetailContent(model: CatalogViewModel, state: CatalogUiState, menu: 
                                 when(episode.right) { ViewingRight.LOCKED -> "🔒"; ViewingRight.UNKNOWN -> "Õigus kontrollimata"; ViewingRight.EXPIRED -> "Aegunud"; else -> null }).joinToString(" · "), fontSize = 11.sp)
                             Text(episode.description.orEmpty(), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
-                        Button(onClick = { model.play(episode, true) }, modifier = restoredCatalogFocus(model, page.key, "restart:${episode.id}").padding(end = 12.dp)) { Text("Algusest", fontSize = 11.sp) }
+                        Button(onClick = { model.play(episode, true) }, modifier = restoredCatalogFocus(model, page.key, "restart:${episode.id}", targets = focusTargets).padding(end = 12.dp)) { Text("Algusest", fontSize = 11.sp) }
                     }
                 }
             }
@@ -350,12 +457,13 @@ private fun DetailContent(model: CatalogViewModel, state: CatalogUiState, menu: 
 private fun restoredCatalogFocus(model: CatalogViewModel, page: String, key: String, initial: Boolean = false, targets: MutableMap<String, FocusRequester>? = null): Modifier {
     val requester = remember { FocusRequester() }
     RegisterCatalogFocus(targets, key, requester)
-    val allowAutofocus = LocalContentAutofocus.current
+    val allowAutofocus by rememberUpdatedState(LocalContentAutofocus.current)
     LaunchedEffect(Unit) {
         val previous = model.focusedKeys[page]
-        if (allowAutofocus && (previous == key || (previous == null && initial))) { delay(30); requester.requestFocus() }
+        if (allowAutofocus && (previous == key || (previous == null && initial))) { delay(30); if (allowAutofocus && model.state.value.contentFocusPending) requestCatalogFocus(model, page, key, requester) }
     }
-    return Modifier.focusRequester(requester).onFocusChanged { if (it.isFocused) model.recordFocus(page, key) }
+    val restoring = LocalBrowseRestoreTarget.current
+    return Modifier.focusProperties { canFocus = restoring == null || restoring == key }.focusRequester(requester).onFocusChanged { if (it.isFocused) model.recordFocus(page, key) }
 }
 
 @Composable
@@ -364,4 +472,33 @@ private fun RegisterCatalogFocus(targets: MutableMap<String, FocusRequester>?, k
         targets?.set(key, requester)
         onDispose { if (targets?.get(key) === requester) targets.remove(key) }
     }
+}
+
+@Composable
+private fun BindContentFocus(model: CatalogViewModel, page: String, targets: Map<String, FocusRequester>, contentFocus: CatalogContentFocus, initialKey: String? = null) {
+    DisposableEffect(page, targets, contentFocus, initialKey) {
+        // Resolve the actual remembered control before transferring focus from
+        // the rail. Entering the whole group first briefly focuses its first filter.
+        val request = {
+            preferredContentFocus(model, page, targets, fallbackToFilters = true, initialKey = initialKey)?.let { requestCatalogFocus(model, page, it.first, it.second) } == true
+        }
+        contentFocus.request = request
+        onDispose { if (contentFocus.request === request) contentFocus.request = null }
+    }
+}
+
+private fun preferredContentFocus(model: CatalogViewModel, page: String, targets: Map<String, FocusRequester>, fallbackToFilters: Boolean, initialKey: String? = null): Pair<String, FocusRequester>? {
+    targets[model.focusedKeys[page]]?.let { return model.focusedKeys.getValue(page) to it }
+    if (initialKey != null) return targets[initialKey]?.let { initialKey to it }
+    // SnapshotStateMap does not retain visual/insertion order. The editable
+    // search field must win over whichever poster happens to be registered first.
+    if (page == CatalogSection.SEARCH.name) return targets["search"]?.let { "search" to it }
+    return targets.entries.firstOrNull { !it.key.startsWith("filter:") }?.toPair()
+        ?: targets["filter:rights"]?.let { "filter:rights" to it }.takeIf { fallbackToFilters }
+}
+
+private fun requestCatalogFocus(model: CatalogViewModel, page: String, key: String, requester: FocusRequester): Boolean {
+    val restored = requester.requestFocus()
+    if (restored) model.recordFocus(page, key, restored = true)
+    return restored
 }

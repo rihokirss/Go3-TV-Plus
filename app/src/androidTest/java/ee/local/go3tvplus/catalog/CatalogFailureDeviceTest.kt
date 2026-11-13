@@ -9,6 +9,7 @@ import ee.local.go3tvplus.data.local.AppDatabase
 import ee.local.go3tvplus.domain.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.json.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -20,12 +21,15 @@ class CatalogFailureDeviceTest {
         var offline = false
         var partial = true
         var tickets = 0
+        var searchGate: CompletableDeferred<Unit>? = null
+        var searchStarted = CompletableDeferred<Unit>()
+        var cancelledSearches = 0
         var detailsGate: CompletableDeferred<Unit>? = null
         val detailsStarted = CompletableDeferred<Unit>()
         private fun raw(profile: String, id: String) = Json.parseToJsonElement("""{"id":"$id","title":"$profile Öö $id","type":"VOD","active":true}""").jsonObject
         override suspend fun catalogRights(accessToken: String, profileId: String): CatalogRights {
             if (offline) throw Go3Failure.Unavailable("Test network unavailable")
-            return CatalogRights(mapOf("one" to null, "two" to null))
+            return CatalogRights(mapOf("one" to null, "two" to null, "remote" to null))
         }
         override suspend fun catalogPage(accessToken: String, profileId: String, offset: Int, limit: Int): CatalogPage {
             if (offline || offset > 0) throw Go3Failure.Unavailable("Test interrupted page")
@@ -40,6 +44,14 @@ class CatalogFailureDeviceTest {
         }
         override suspend fun movieTicket(accessToken: String, profileId: String, movieId: String): PlaybackTicket {
             tickets++; error("Metadata must not request video")
+        }
+        override suspend fun catalogSearch(accessToken: String, profileId: String, query: String): List<JsonObject> {
+            searchStarted.complete(Unit)
+            try {
+                searchGate?.await()
+                if (offline) throw Go3Failure.Unavailable("Test network unavailable")
+                return listOf(raw(profileId, "remote"))
+            } catch (error: CancellationException) { cancelledSearches++; throw error }
         }
     }
     @Test fun interruptedRefreshPreservesCacheAndRightsFailuresAreVisibleAndProfilesCancelRequests() = runBlocking {
@@ -80,6 +92,53 @@ class CatalogFailureDeviceTest {
             // Unknown is distinct from a confirmed locked item when a profile has no rights snapshot.
             db.catalogDao().saveTitles(listOf(CatalogEntity(profileId = "unknown", id = "x", kind = "MOVIE", normalizedText = "unknown", json = """{"id":"x","type":"VOD","title":"Unknown"}""", seriesId = null, seasonId = null, detailed = false, updatedAt = 1)))
             assertEquals(ViewingRight.UNKNOWN, repository.titles("unknown").first().single().right)
+        } finally { scope.coroutineContext[Job]!!.cancelAndJoin(); db.close() }
+    }
+
+    @Test fun searchShowsUncachedServerTitlesAndFallsBackOfflineWithoutLeakingProfiles() = runBlocking {
+        val instrument = InstrumentationRegistry.getInstrumentation()
+        val db = Room.inMemoryDatabaseBuilder(instrument.targetContext, AppDatabase::class.java).build()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+        val gateway = Gateway().apply { partial = false }
+        val tokens = object : TokenStore {
+            override fun load() = AuthTokens("test-only-not-a-real-token")
+            override fun save(tokens: AuthTokens) = Unit
+            override fun clear() = Unit
+        }
+        val repository = CatalogRepository(gateway, AuthCoordinator(gateway, tokens, scope), db, scope)
+        try {
+            val fresh = repository.searchResults("fresh", "oo").toList().last()
+            assertEquals(listOf("remote"), fresh.items.map { it.id })
+            assertEquals(ViewingRight.UNKNOWN, fresh.items.single().right)
+            assertNull(db.catalogDao().title("fresh", "remote"))
+            repository.refresh("a")
+            val online = repository.searchResults("a", "oo").toList().last()
+            assertFalse(online.offline)
+            assertEquals(setOf("one", "two", "remote"), online.items.map { it.id }.toSet())
+            assertEquals(ViewingRight.AVAILABLE, online.items.first { it.id == "remote" }.right)
+            gateway.offline = true
+            val offline = repository.searchResults("a", "oo").toList().last()
+            assertTrue(offline.offline)
+            assertEquals(setOf("one", "two"), offline.items.map { it.id }.toSet())
+            assertTrue(offline.items.all { it.right == ViewingRight.AVAILABLE })
+
+            gateway.offline = false
+            gateway.searchStarted = CompletableDeferred()
+            gateway.searchGate = CompletableDeferred()
+            val model = CatalogViewModel(repository, scope, instrument.targetContext)
+            instrument.runOnMainSync { model.setProfile("a") }
+            withTimeout(5000) { model.state.first { it.titles.size == 2 } }
+            instrument.runOnMainSync { model.query("oo") }
+            withTimeout(5000) { gateway.searchStarted.await() }
+            instrument.runOnMainSync { model.setProfile("b") }
+            gateway.searchGate!!.complete(Unit)
+            gateway.searchGate = null
+            instrument.runOnMainSync { model.query("oo") }
+            withTimeout(5000) { model.state.first { it.profile == "b" && !it.searching && it.searchTitles?.isNotEmpty() == true } }
+            assertTrue(gateway.cancelledSearches > 0)
+            assertTrue(model.state.value.searchTitles!!.all { it.title.startsWith("b ") })
+            assertTrue(model.state.value.list.isEmpty())
+            assertEquals(0, gateway.tickets)
         } finally { scope.coroutineContext[Job]!!.cancelAndJoin(); db.close() }
     }
 }
