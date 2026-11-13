@@ -18,7 +18,9 @@ data class SeasonEntity(val profileId: String, val id: String, val seriesId: Str
 @Entity(tableName = "catalog_rights", primaryKeys = ["profileId", "id"])
 data class RightEntity(val profileId: String, val id: String, val till: Long?, val checkedAt: Long)
 @Entity(tableName = "catalog_sync")
-data class CatalogSyncEntity(@PrimaryKey val profileId: String, val rightsCheckedAt: Long, val catalogCheckedAt: Long = 0)
+data class CatalogSyncEntity(@PrimaryKey val profileId: String, val rightsCheckedAt: Long, val catalogCheckedAt: Long = 0,
+    @ColumnInfo(defaultValue = "0") val genresCheckedAt: Long = 0,
+    @ColumnInfo(defaultValue = "'[]'") val popularMovieIds: String = "[]")
 @Entity(tableName = "catalog_watchlist", primaryKeys = ["profileId", "id"])
 data class WatchlistEntity(val profileId: String, val id: String, val addedAt: Long)
 @Entity(tableName = "catalog_progress", primaryKeys = ["profileId", "contentId"])

@@ -2,6 +2,10 @@ package ee.local.go3tvplus.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,8 +16,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -24,6 +33,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
+import kotlinx.coroutines.delay
+
+internal val LocalSettingsSurface = staticCompositionLocalOf { false }
 
 internal object Go3Colors {
     // Bränd
@@ -113,7 +125,9 @@ internal fun OverlayHeader(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(kicker, color = Go3Colors.Cyan, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        Text(kicker, color = if (LocalSettingsSurface.current) NavigationStyle.Accent else Go3Colors.Cyan,
+            fontSize = if (LocalSettingsSurface.current) 11.sp else 17.sp,
+            letterSpacing = if (LocalSettingsSurface.current) 2.sp else 0.sp, fontWeight = FontWeight.Bold)
         if (title != null) Text(title, color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold)
         if (hint != null) Text(hint, color = Go3Colors.TextHint, fontSize = 14.sp)
         if (keyHints != null) KeyHintRow(*keyHints.toTypedArray())
@@ -125,7 +139,7 @@ internal fun KeyCap(label: String) {
     Text(
         label,
         modifier = Modifier
-            .background(Go3Colors.ChipIdle, RoundedCornerShape(Go3Radii.XS))
+            .background(if (LocalSettingsSurface.current) Color.White.copy(alpha = .08f) else Go3Colors.ChipIdle, RoundedCornerShape(Go3Radii.XS))
             .border(1.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(Go3Radii.XS))
             .padding(horizontal = 5.dp, vertical = 1.dp),
         color = Color.White,
@@ -163,9 +177,14 @@ internal fun SettingsRow(
     verticalPadding: Dp = 14.dp,
     content: @Composable RowScope.() -> Unit,
 ) {
+    val modern = LocalSettingsSurface.current
+    val bringIntoView = remember { BringIntoViewRequester() }
+    LaunchedEffect(selected) { if (selected && modern) { delay(30); bringIntoView.bringIntoView() } }
     Row(
-        modifier.fillMaxWidth()
-            .background(if (selected) Go3Colors.Accent else Go3Colors.RowIdle, RoundedCornerShape(Go3Radii.M))
+        modifier.fillMaxWidth().bringIntoViewRequester(bringIntoView)
+            .background(if (modern) Color.White.copy(alpha = if (selected) .1f else .035f) else if (selected) Go3Colors.Accent else Go3Colors.RowIdle,
+                if (modern) NavigationStyle.Shape else RoundedCornerShape(Go3Radii.M))
+            .then(if (modern && selected) Modifier.border(2.dp, Color.White, NavigationStyle.Shape) else Modifier)
             .padding(horizontal = 18.dp, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
         content = content,
@@ -188,15 +207,10 @@ internal fun CenteredMenuPanel(
     width: Dp = 680.dp,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Box(Modifier.fillMaxSize().background(Go3Colors.ScrimHeavy), contentAlignment = Alignment.Center) {
-        Column(
-            modifier.width(width)
-                .clip(RoundedCornerShape(Go3Radii.XL))
-                .background(Go3Brushes.menuCard)
-                .border(1.dp, Go3Colors.Cyan.copy(alpha = 0.18f), RoundedCornerShape(Go3Radii.XL))
-                .padding(horizontal = 36.dp, vertical = 26.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            content = content,
-        )
+    CompositionLocalProvider(LocalSettingsSurface provides true) {
+        SettingsFrame {
+            Column(modifier.widthIn(max = width).fillMaxWidth().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
+        }
     }
 }

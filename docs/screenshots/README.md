@@ -1,11 +1,11 @@
 # README ekraanipildid
 
-Go3 Air **0.5.0** Sony BRAVIA Android TV-s. Kataloogipildid on tegelikud rakenduse ekraanipildid; neis pole kasutajaliidest ega Go3 kataloogi taustapilte ümber joonistatud. Pildid on README jaoks teisendatud WebP-vormingusse kvaliteediga 90, algset mõõtu säilitades.
+Go3 Air **0.5.0** Sony BRAVIA Android TV-s ja **0.5.1** TCL Google TV-s. Kataloogipildid on tegelikud rakenduse ekraanipildid; neis pole kasutajaliidest ega Go3 kataloogi taustapilte ümber joonistatud. Pildid on README jaoks teisendatud WebP-vormingusse kvaliteediga 90, algset mõõtu säilitades.
 
 | Fail | Vaade | Päritolu |
 | --- | --- | --- |
-| [filmid.webp](filmid.webp) | Filmide avaleht | Sony ekraanipilt |
-| [filmi-detail.webp](filmi-detail.webp) | Filmi tutvustus ja tegevused | Sony ekraanipilt |
+| [filmid.webp](filmid.webp) | Filmide avaleht, kompaktsem tutvustus ja populaarsete filmide rida | TCL, 0.5.1 |
+| [filmi-detail.webp](filmi-detail.webp) | Filmi tutvustus ja tegevused | TCL, 0.5.1 |
 | [seriaali-osad.webp](seriaali-osad.webp) | Seriaali hooaeg ja episood | Sony ekraanipilt |
 | [otsing.webp](otsing.webp) | Ühine otsing ja filtrid | Sony ekraanipilt |
 | [telekava-originaal.webp](telekava-originaal.webp) | Telekava, DRM-video salvestusel must | Sony ekraanipilt |

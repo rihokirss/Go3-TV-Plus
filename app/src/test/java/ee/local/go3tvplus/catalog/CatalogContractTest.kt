@@ -72,4 +72,31 @@ class CatalogContractTest {
         assertTrue(state.copy(seasons = mapOf("2" to state.seasons.getValue("2") + CatalogSeason("season2", "2", 2, "Second"))).rows().any { it.key == "continue" })
     }
 
+    @Test fun genresContainUnopenedMoviesAndRespectKindRightsAndYearFilters() {
+        val first = title("1", extra = """, "year":2024,"genres":[{"name":"Draama"},{"name":"Märul"}]""").copy(right = ViewingRight.AVAILABLE)
+        val second = title("2", extra = """, "year":2024,"genres":[{"name":"Draama"}]""").copy(right = ViewingRight.AVAILABLE)
+        val locked = first.copy(id = "locked", right = ViewingRight.LOCKED)
+        val series = second.copy(id = "series", kind = CatalogKind.SERIES)
+        val state = CatalogUiState(titles = listOf(first, second, locked, series), section = CatalogSection.MOVIES,
+            pages = listOf(CatalogScreenState("movies", "Filmid", filter = CatalogFilter(kind = CatalogKind.MOVIE))))
+        assertEquals(listOf("1", "2"), state.rows().single { it.key == "genre:Draama" }.items.map { it.id })
+        assertEquals(listOf("1"), state.rows().single { it.key == "genre:Märul" }.items.map { it.id })
+        assertEquals(listOf("1", "2"), state.filtered(CatalogFilter(kind = CatalogKind.MOVIE, genre = "Draama", year = 2024)).map { it.id })
+        assertTrue(state.filtered(CatalogFilter(genre = "Draama", year = 2023)).isEmpty())
+    }
+
+    @Test fun popularityUsesServerOrderAndNeverFallsBackToRecentlyAddedOrSeries() {
+        val a = title("a").copy(right = ViewingRight.AVAILABLE, added = 300)
+        val b = a.copy(id = "b", added = 100)
+        val locked = a.copy(id = "locked", right = ViewingRight.LOCKED)
+        val series = a.copy(id = "series", kind = CatalogKind.SERIES)
+        val state = CatalogUiState(titles = listOf(a, b, locked, series), popularMovieIds = listOf("b", "locked", "missing", "series", "a", "b"))
+        assertEquals(listOf("b", "a"), state.rows().single { it.key == "popular" }.items.map { it.id })
+        assertEquals(listOf("b", "locked", "a"), state.popularMovies(state.filtered(CatalogFilter(allRights = true))).map { it.id })
+        val grid = state.copy(pages = listOf(CatalogScreenState("popular", "Populaarsed", grid = true, group = "popular")))
+        assertEquals(listOf("b", "a"), grid.browseItems().map { it.id })
+        assertFalse(state.copy(popularMovieIds = emptyList()).rows().any { it.key == "popular" })
+        assertFalse(state.copy(pages = listOf(CatalogScreenState("series", "Seriaalid", filter = CatalogFilter(kind = CatalogKind.SERIES)))).rows().any { it.key == "popular" })
+    }
+
 }

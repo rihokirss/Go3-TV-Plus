@@ -472,7 +472,8 @@ class TvViewModel(
             return true
         }
         if (vodItem != null && (digitFor(event.keyCode) != null || event.keyCode == KeyEvent.KEYCODE_CHANNEL_UP || event.keyCode == KeyEvent.KEYCODE_CHANNEL_DOWN)) return true
-        if (event.keyCode == KeyEvent.KEYCODE_BACK && catalogueSettings && snapshot.overlay == Overlay.APP_SETTINGS) {
+        if (snapshot.overlay == Overlay.APP_SETTINGS &&
+            ((event.keyCode == KeyEvent.KEYCODE_BACK && catalogueSettings) || event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT)) {
             if (event.isFirstPress) { catalogueSettings = false; mutableState.update { it.copy(overlay = Overlay.NONE) }; catalog.openMenu() }
             return true
         }

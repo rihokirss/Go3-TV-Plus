@@ -38,11 +38,13 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import ee.local.go3tvplus.ui.NavigationRail
+import ee.local.go3tvplus.ui.NavigationStyle
 
-private val Ink = Color(0xFF090D17)
-private val Muted = Color(0xFFA7B0C1)
-private val Accent = Color(0xFF8FE7F4)
-private val Shape = RoundedCornerShape(10.dp)
+private val Ink = NavigationStyle.Background
+private val Muted = NavigationStyle.Muted
+private val Accent = NavigationStyle.Accent
+private val Shape = NavigationStyle.Shape
 private val LocalContentAutofocus = staticCompositionLocalOf { true }
 
 @Composable
@@ -73,10 +75,7 @@ fun CatalogOverlay(model: CatalogViewModel) {
                 }
             }
             Row(Modifier.fillMaxSize()) {
-                Column(Modifier.width(180.dp).fillMaxHeight().background(Ink.copy(alpha = .95f)).padding(start = 20.dp, end = 16.dp, top = 35.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                    Text("GO3 AIR", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
-                    Text("SINU HETK. SINU VALIK.", color = Muted, fontSize = 8.sp, letterSpacing = 1.sp)
-                    Spacer(Modifier.height(27.dp))
+                NavigationRail {
                     CatalogSection.entries.forEach { section ->
                         val selected = state.section == section
                         Button(onClick = { model.select(section) },
@@ -94,8 +93,6 @@ fun CatalogOverlay(model: CatalogViewModel) {
                             Text(section.label, fontSize = 15.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
                         }
                     }
-                    Spacer(Modifier.weight(1f))
-                    Text("Video jätkab taustal", color = Muted.copy(alpha = .65f), fontSize = 10.sp, modifier = Modifier.padding(bottom = 25.dp))
                 }
                 if (page != null) saved.SaveableStateProvider(page.key) {
                     CompositionLocalProvider(LocalContentAutofocus provides !state.menu) {
@@ -130,18 +127,11 @@ private fun BrowseContent(model: CatalogViewModel, state: CatalogUiState, menu: 
     LaunchedEffect(state.entry, state.menu) {
         if (!state.menu) { delay(30); (focusTargets[model.focusedKeys[page.key]] ?: focusTargets.values.firstOrNull())?.requestFocus() }
     }
-    val rows by produceState<List<CatalogRow>>(emptyList(), state.titles, state.progress, state.list, page.filter, state.section) {
+    val rows by produceState<List<CatalogRow>>(emptyList(), state.titles, state.progress, state.list, state.popularMovieIds, page.filter, state.section) {
         value = withContext(Dispatchers.Default) { state.rows() }
     }
-    val filtered by produceState<List<CatalogTitle>>(emptyList(), state.titles, state.list, state.searchIds, page.filter, page.group, state.progress) {
-        value = withContext(Dispatchers.Default) {
-        val base = state.filtered()
-        when (page.group) {
-            "continue" -> base.filter { state.progressFor(it)?.let { p -> p.positionMs > 0 && p.continueEligible && (if (it.kind == CatalogKind.SERIES) state.seriesHasMore(it) else !p.watched) } == true }
-            "list" -> base.filter { it.id in state.list }
-            else -> base
-        }
-        }
+    val filtered by produceState<List<CatalogTitle>>(emptyList(), state.titles, state.list, state.popularMovieIds, state.searchIds, page.filter, page.group, state.progress) {
+        value = withContext(Dispatchers.Default) { state.browseItems() }
     }
     var focused by remember { mutableStateOf<CatalogTitle?>(null) }
     val active = focused ?: filtered.firstOrNull()
@@ -168,7 +158,7 @@ private fun BrowseContent(model: CatalogViewModel, state: CatalogUiState, menu: 
             val saved = model.scrollPositions[page.key + ":rows"]
             val scroll = rememberLazyListState(saved?.first ?: 0, saved?.second ?: 0)
             LaunchedEffect(scroll) { snapshotFlow { scroll.firstVisibleItemIndex to scroll.firstVisibleItemScrollOffset }.distinctUntilChanged().collect { model.scrollPositions[page.key + ":rows"] = it } }
-            Column(Modifier.fillMaxWidth().height(200.dp).padding(start = 32.dp, end = 105.dp, top = 25.dp)) {
+            Column(Modifier.fillMaxWidth().heightIn(min = 150.dp).padding(start = 32.dp, end = 105.dp, top = 25.dp, bottom = 8.dp)) {
                 Text(page.title.uppercase(), color = Accent, fontSize = 11.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(9.dp))
                 Text(active?.title ?: page.title, color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -226,14 +216,17 @@ private fun SearchField(query: String, change: (String) -> Unit, initial: Boolea
 private fun Filters(model: CatalogViewModel, state: CatalogUiState) {
     val filter = state.page?.filter ?: return
     var choosing by remember { mutableStateOf<String?>(null) }
-    val genres = remember(state.titles) { state.titles.filter { it.kind != CatalogKind.EPISODE }.flatMap { it.genres }.distinct().sorted() }
-    val years = remember(state.titles) { state.titles.mapNotNull { it.year }.distinct().sortedDescending() }
+    val choices by produceState<List<CatalogTitle>>(emptyList(), state.titles, state.list, state.section, state.searchIds, state.popularMovieIds, state.page?.group, filter, state.progress) {
+        value = withContext(Dispatchers.Default) { state.browseItems(filter.copy(genre = null, year = null)) }
+    }
+    val genres = remember(choices) { choices.flatMap { it.genres }.distinct().sorted() }
+    val years = remember(choices) { choices.mapNotNull { it.year }.distinct().sortedDescending() }
     LazyRow(horizontalArrangement = Arrangement.spacedBy(9.dp), contentPadding = PaddingValues(vertical = 6.dp)) {
         item { FilterButton(if (filter.allRights) "Kogu kataloog" else "Minu pakett") { model.filter(filter.copy(allRights = !filter.allRights)) } }
         if (state.page?.grid == true) item { FilterButton(when(filter.kind) { CatalogKind.MOVIE -> "Filmid"; CatalogKind.SERIES -> "Seriaalid"; else -> "Filmid ja seriaalid" }) { choosing = "kind" } }
         item { FilterButton(filter.genre ?: "Kõik žanrid") { choosing = "genre" } }
         item { FilterButton(filter.year?.toString() ?: "Kõik aastad") { choosing = "year" } }
-        item { FilterButton(filter.sort.label) { choosing = "sort" } }
+        if (state.page?.group != "popular") item { FilterButton(filter.sort.label) { choosing = "sort" } }
     }
     if (choosing != null) {
         val options: List<Pair<String, () -> Unit>> = when(choosing) {
@@ -303,17 +296,17 @@ private fun DetailContent(model: CatalogViewModel, state: CatalogUiState, menu: 
     val progress = state.progressFor(item)
     val episodes = remember(state.titles, state.selectedSeasons, item.id) { state.titles.filter { it.seriesId == item.id && it.seasonId == state.selectedSeasons[item.id] }.sortedBy { it.episode ?: Int.MAX_VALUE } }
     LaunchedEffect(item.id) { focus(item) }
-    LazyColumn(state = scroll, contentPadding = PaddingValues(start = 32.dp, end = 32.dp, top = 35.dp, bottom = 35.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    LazyColumn(state = scroll, contentPadding = PaddingValues(start = 32.dp, end = 32.dp, top = 35.dp, bottom = 35.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Text(if (item.kind == CatalogKind.SERIES) "SERIAAL" else "FILM", color = Accent, fontSize = 11.sp, letterSpacing = 2.sp)
             Text(item.title, color = Color.White, fontSize = 35.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(metadata(item), color = Muted, fontSize = 14.sp, modifier = Modifier.padding(vertical = 10.dp))
             Text(item.description.orEmpty(), color = Color.White.copy(alpha = .85f), fontSize = 14.sp, lineHeight = 21.sp, maxLines = 5, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(.92f))
-            if (item.audio.isNotEmpty() || item.subtitles.isNotEmpty()) Text(listOfNotNull(item.audio.takeIf { it.isNotEmpty() }?.joinToString(", ", "Heli: "), item.subtitles.takeIf { it.isNotEmpty() }?.joinToString(", ", "Subtiitrid: ")).joinToString("  ·  "), color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 12.dp))
+            if (item.audio.isNotEmpty() || item.subtitles.isNotEmpty()) Text(listOfNotNull(item.audio.takeIf { it.isNotEmpty() }?.joinToString(", ", "Heli: "), item.subtitles.takeIf { it.isNotEmpty() }?.joinToString(", ", "Subtiitrid: ")).joinToString("  ·  "), color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp))
             if (item.right != ViewingRight.AVAILABLE) Text(when(item.right) { ViewingRight.LOCKED -> "🔒 See teos ei kuulu sinu paketti"; ViewingRight.UNKNOWN -> "Vaatamisõigus on kontrollimata"; ViewingRight.EXPIRED -> "See teos ei ole praegu saadaval"; else -> "" }, color = Color(0xFFFFC9AD), fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
         }
         item {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(vertical = 8.dp)) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(vertical = 4.dp)) {
                 item { Button(onClick = { model.play(item) }, modifier = restoredCatalogFocus(model, page.key, "play", initial = true).onPreviewKeyEvent { if (it.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_LEFT) { model.openMenu(); menu.requestFocus(); true } else false }) { Text(if (progress != null && !progress.watched && progress.positionMs > 0) "Jätka" else "Vaata") } }
                 item { Button(onClick = { model.play(item, true) }, modifier = restoredCatalogFocus(model, page.key, "restart")) { Text("Alusta algusest") } }
                 item { Button(onClick = { model.toggleList(item) }, modifier = restoredCatalogFocus(model, page.key, "list")) { Text(if (item.id in state.list) "Eemalda nimekirjast" else "+ Minu nimekiri") } }

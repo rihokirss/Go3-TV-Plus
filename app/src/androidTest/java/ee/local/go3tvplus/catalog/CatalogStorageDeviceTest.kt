@@ -35,7 +35,7 @@ class CatalogStorageDeviceTest {
             old.execSQL("INSERT INTO watch_now_matches VALUES ('a','p','key','[]',0,1)")
             old.version = 4
         }
-        val db = Room.databaseBuilder(context, AppDatabase::class.java, name).addMigrations(AppDatabase.MIGRATION_4_5, AppDatabase.MIGRATION_5_6).build()
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, name).addMigrations(AppDatabase.MIGRATION_4_5, AppDatabase.MIGRATION_5_6, AppDatabase.MIGRATION_6_7).build()
         try {
             assertEquals("Test TV", db.tvDao().observeChannels().first().single().name)
             assertEquals(1, db.tvDao().countPrograms())
@@ -72,7 +72,7 @@ class CatalogStorageDeviceTest {
             old.execSQL("INSERT INTO catalog_progress VALUES ('a','one',NULL,50000,100000,42)")
             old.version = 5
         }
-        var db = Room.databaseBuilder(context, AppDatabase::class.java, name).addMigrations(AppDatabase.MIGRATION_5_6).build()
+        var db = Room.databaseBuilder(context, AppDatabase::class.java, name).addMigrations(AppDatabase.MIGRATION_5_6, AppDatabase.MIGRATION_6_7).build()
         try {
             assertEquals(50_000L, db.catalogDao().progressItem("a", "one")!!.positionMs)
             assertEquals(1, db.catalogDao().historyQueue("a").first().size)
@@ -82,6 +82,37 @@ class CatalogStorageDeviceTest {
             assertTrue(db.catalogDao().historyQueue("b").first().isEmpty())
         } finally { db.close(); context.deleteDatabase(name) }
     }
+    @Test fun schemaSixCatalogueAndProfileMemorySurviveGenreCacheUpgrade() = runBlocking {
+        val name = "catalog-genres-migration-test.db"
+        context.deleteDatabase(name)
+        val path = context.getDatabasePath(name); path.parentFile!!.mkdirs()
+        val schema = JSONObject(InstrumentationRegistry.getInstrumentation().context.assets.open("catalog-migration-from-6.json").bufferedReader().readText()).getJSONObject("database")
+        SQLiteDatabase.openOrCreateDatabase(path, null).use { old ->
+            val entities = schema.getJSONArray("entities")
+            for (index in 0 until entities.length()) {
+                val entity = entities.getJSONObject(index)
+                val table = entity.getString("tableName")
+                old.execSQL(entity.getString("createSql").replace("\${TABLE_NAME}", table))
+                val indices = entity.optJSONArray("indices") ?: org.json.JSONArray()
+                for (j in 0 until indices.length()) old.execSQL(indices.getJSONObject(j).getString("createSql").replace("\${TABLE_NAME}", table))
+            }
+            old.execSQL("INSERT INTO catalog_sync VALUES ('a',100,200)")
+            old.execSQL("INSERT INTO catalog_watchlist VALUES ('a','film',42)")
+            old.execSQL("INSERT INTO catalog_progress VALUES ('a','film',NULL,50000,100000,42,0,1,40)")
+            old.execSQL("INSERT INTO catalog_history_outbox VALUES ('a','film',NULL,50000,100000,42,0)")
+            old.version = 6
+        }
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, name).addMigrations(AppDatabase.MIGRATION_6_7).build()
+        try {
+            val dao = db.catalogDao()
+            assertEquals(CatalogSyncEntity("a", 100, 200, 0, "[]"), dao.syncSnapshot("a"))
+            assertEquals(listOf("film"), dao.watchlist("a").first().map { it.id })
+            assertEquals(50_000L, dao.progressItem("a", "film")!!.positionMs)
+            assertEquals(1, dao.historyQueue("a").first().size)
+            assertNull(dao.syncSnapshot("b"))
+        } finally { db.close(); context.deleteDatabase(name) }
+    }
+
     @Suppress("DEPRECATION")
     @Test fun sonyAndroidNineArchiveSigningInfoUsesCombinedFlags() {
         val manager = context.packageManager

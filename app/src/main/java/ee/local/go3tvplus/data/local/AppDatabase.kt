@@ -84,12 +84,18 @@ interface TvDao {
     suspend fun prunePrograms(beforeMs: Long)
 }
 
-@Database(entities = [ChannelEntity::class, ProgramEntity::class, CatalogEntity::class, CatalogSearchEntity::class, SeasonEntity::class, RightEntity::class, CatalogSyncEntity::class, WatchlistEntity::class, ProgressEntity::class, HistoryOutboxEntity::class], version = 6, exportSchema = true)
+@Database(entities = [ChannelEntity::class, ProgramEntity::class, CatalogEntity::class, CatalogSearchEntity::class, SeasonEntity::class, RightEntity::class, CatalogSyncEntity::class, WatchlistEntity::class, ProgressEntity::class, HistoryOutboxEntity::class], version = 7, exportSchema = true)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun tvDao(): TvDao
     abstract fun catalogDao(): CatalogDao
 
     companion object {
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE catalog_sync ADD COLUMN genresCheckedAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE catalog_sync ADD COLUMN popularMovieIds TEXT NOT NULL DEFAULT '[]'")
+            }
+        }
         internal val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE catalog_progress ADD COLUMN completed INTEGER NOT NULL DEFAULT 0")
@@ -145,7 +151,7 @@ abstract class AppDatabase : RoomDatabase() {
             context,
             AppDatabase::class.java,
             "go3-tv-cache.db",
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7).build()
     }
 }
 

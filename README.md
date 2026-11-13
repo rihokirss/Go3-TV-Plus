@@ -19,14 +19,13 @@ Mitteametlik Android TV klient kiireks ja puldisõbralikuks Go3 telekanalite, fi
 | [![Filmide ja seriaalide otsing plakatiruudustiku ning paketi-, liigi-, žanri- ja aastafiltritega](docs/screenshots/otsing.webp)](docs/screenshots/otsing.webp) | [![Telekava illustratsioon: kanalite saateruudustik ja valitud saate info looduskaadri taustal](docs/screenshots/telekava-illustratsioon.webp)](docs/screenshots/telekava-illustratsioon.webp) |
 | Leia filmid ja seriaalid ühest vaatest. | Sirvi saatekava mängiva video peal. |
 
-Kataloogivaated on Go3 Air 0.5.0 päris ekraanipildid Sony Android TV-st. Telekava illustratsioon on loodud päris ekraanipildi põhjal: DRM-i tõttu mustaks jääv videotaust on asendatud tehisintellektiga loodud looduskaadriga. [Algne telekava ekraanipilt](docs/screenshots/telekava-originaal.webp) ja [piltide päritolu](docs/screenshots/README.md). Piltidel olev sisu sõltub Go3 valikust ning kasutaja paketist.
-
 ## Põhivõimalused
 
 - viimati vaadatud kanal avaneb automaatselt;
 - läbipaistev ja tihe EPG töötab mängiva video peal;
 - otse-TV ja Go3 pakutav järelvaatamine;
 - eraldi filmide ja seriaalide kataloog, otsing, hooajad ja osad, Go3 profiiliga sünkroonitav vaatamisjärg ning kohalik nimekiri;
+- Go3 enda järjestusega populaarseimate filmide rida ja „Vaata kõiki” vaade;
 - kiire kanaliriba, lemmikud ning muudetavad kanalinumbrid;
 - kanalivahetus `CH+/CH−`, D-padi ja numbriklahvidega;
 - ajanihe, 10-sekundiline kerimine ja saatevahetuste markerid ajaribal;
@@ -82,7 +81,7 @@ Luba teleris arendaja valikud ja Wireless debugging, ühenda arvuti teleriga nin
 
 ```bash
 adb connect TELERI_IP:ADB_PORT
-adb install -r Go3-Air-0.5.0.apk
+adb install -r Go3-Air-0.5.1.apk
 ```
 
 `-r` uuendab olemasolevat rakendust ja jätab sidumise ning seaded alles. Kui Android kuvab `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, on sama paketiga rakendus allkirjastatud teise võtmega. Vana rakenduse eemaldamine lahendab konflikti, kuid kustutab selle kohalikud seaded ja konto sidumise.
@@ -132,6 +131,11 @@ Kataloogis kuvatakse vaikimisi konto paketti kuuluv sisu. **Kogu kataloog** näi
 ka lukustatud ja kontrollimata õigusega teoseid eraldi tähisega. Otsing toetab
 pealkirja ja algpealkirja ning täpitähtedeta sisestust. Žanri-, aasta- ja liigifiltrid
 ning sortimine on saadaval ka „Vaata kõiki” ruudustikus.
+
+Žanrid laaditakse lehekaupa kogu kataloogi jaoks, teoseid eraldi avamata.
+**Populaarseimad filmid Go3-s** kasutab Go3 enda nädala edetabeli järjestust,
+säilitab paketifiltri ning avaneb ka „Vaata kõiki” ruudustikuna. Kui teenus
+edetabelit ei paku, peidetakse rida; võrguvea korral säilib varem laaditud valik.
 
 **Jätka vaatamist** sünkroonib edenemise valitud Go3 profiiliga mõlemas suunas.
 Võrguühenduseta muudatused säilivad teleris ja saadetakse ühenduse taastumisel.

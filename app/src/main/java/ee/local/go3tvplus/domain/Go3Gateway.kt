@@ -20,6 +20,8 @@ interface Go3Gateway {
     suspend fun movieTicket(accessToken: String, profileId: String, movieId: String): PlaybackTicket =
         throw Go3Failure.Unavailable("Kataloogivideo pole saadaval")
     suspend fun catalogPage(accessToken: String, profileId: String, offset: Int, limit: Int): CatalogPage = throw Go3Failure.Unavailable("Kataloog ei ole saadaval")
+    suspend fun catalogGenrePage(accessToken: String, profileId: String, offset: Int, limit: Int): CatalogPage = throw Go3Failure.Unavailable("Kataloogi žanrid ei ole saadaval")
+    suspend fun catalogPopularMovies(accessToken: String, profileId: String): List<JsonObject> = emptyList()
     suspend fun catalogDetail(accessToken: String, profileId: String, id: String): JsonObject = throw Go3Failure.Unavailable("Teose andmed puuduvad")
     suspend fun catalogSeasons(accessToken: String, profileId: String, seriesId: String): List<CatalogSeason> = emptyList()
     suspend fun catalogEpisodes(accessToken: String, profileId: String, seriesId: String, seasonId: String): List<JsonObject> = emptyList()

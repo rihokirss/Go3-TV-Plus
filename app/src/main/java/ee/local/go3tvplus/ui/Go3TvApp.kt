@@ -44,6 +44,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -1086,18 +1087,13 @@ private fun AppSettingsOverlay(state: TvUiState) {
     LaunchedEffect(state.appSettingsIndex) {
         listState.followSelection(state.appSettingsIndex.coerceIn(rows.indices))
     }
-    Box(Modifier.fillMaxSize().background(Go3Colors.Scrim), contentAlignment = Alignment.CenterStart) {
-        Column(
-            Modifier.fillMaxHeight().width(680.dp)
-                .background(Go3Brushes.settingsPanel)
-                .padding(horizontal = 28.dp, vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+    CompositionLocalProvider(LocalSettingsSurface provides true) {
+        SettingsFrame {
             Box(Modifier.fillMaxWidth()) {
                 OverlayHeader(
-                    "SEADED",
-                    "Go3 Air",
-                    keyHints = listOf("▲▼" to "vali", "OK" to "ava/muuda", "BACK" to "sulge"),
+                    "GO3 AIR",
+                    "Seaded",
+                    keyHints = listOf("▲▼" to "vali", "OK" to "ava", "◀" to "peamenüü", "BACK" to "tagasi"),
                 )
                 Text(
                     "v${ee.local.go3tvplus.BuildConfig.VERSION_NAME}",
@@ -2235,11 +2231,13 @@ private fun SettingToggle(checked: Boolean) {
             .width(52.dp)
             .height(28.dp)
             .clip(RoundedCornerShape(14.dp))
-            .background(if (checked) Go3Colors.Cyan else Go3Colors.ChipIdle)
+            .background(if (LocalSettingsSurface.current) {
+                if (checked) NavigationStyle.Accent else Color.White.copy(alpha = .12f)
+            } else if (checked) Go3Colors.Cyan else Go3Colors.ChipIdle)
             .padding(3.dp),
         contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
     ) {
-        Box(Modifier.size(22.dp).background(Color.White, RoundedCornerShape(11.dp)))
+        Box(Modifier.size(22.dp).background(if (checked && LocalSettingsSurface.current) NavigationStyle.Background else Color.White, RoundedCornerShape(11.dp)))
     }
 }
 
@@ -2248,7 +2246,7 @@ private fun SettingValue(value: String) {
     Text(
         "‹  $value  ›",
         modifier = Modifier
-            .background(Go3Colors.ChipIdle, RoundedCornerShape(Go3Radii.L))
+            .background(if (LocalSettingsSurface.current) Color.White.copy(alpha = .08f) else Go3Colors.ChipIdle, RoundedCornerShape(Go3Radii.L))
             .padding(horizontal = 12.dp, vertical = 6.dp),
         color = Color.White,
         fontSize = 15.sp,

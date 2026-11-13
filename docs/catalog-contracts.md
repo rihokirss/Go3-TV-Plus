@@ -5,6 +5,9 @@ Verified through the signed-in Sony Android 9 app on 2026-11-12. These are servi
 | Purpose | GET path below `/api/` | Shape |
 | --- | --- | --- |
 | Catalogue page | `products/vods?firstResult=…&maxResults=…&tier=…` | `items`, `meta.totalCount` |
+| Bulk genres | `products/vods/filtering?type[]=VOD&type[]=SERIAL&firstResult=…&maxResults=…&tier=…` | `items` with full `genres` arrays, `meta.totalCount` |
+| Movie sections | `products/sections/v2/movies?tier=…` | Section array; discover `weekly-top-30-movies-recommendation` by slug |
+| Go3 weekly movie ranking | `int/sections/recommendations?sectionId=…&label=movies&profileUid=…&subscriberId=…&rank=…` | `elements`, ordered movie products; returned title “Kõige populaarsemad filmid Go3-s” |
 | Detail | `products/vods/{id}` | Product object |
 | Seasons | `products/vods/serials/{series}/seasons?tier=…` | Array with `id`, `number`, `title` |
 | Episodes | `products/vods/serials/{series}/seasons/{season}/episodes?tier=…` | Array; order by numeric `episode` |
@@ -19,6 +22,10 @@ Verified examples: film **Transformerid: Väljasuremine** (`3487393`), multi-sea
 Room schema 6 stores catalogue metadata, FTS4 title/original-title index, seasons, rights, sync timestamps, profile watchlist and progress. Migration 4→5 removes `watch_now_matches` and preserves TV tables. A completed catalogue refresh may retire missing titles; an interrupted refresh cannot. Lightweight row revisions avoid reading every JSON blob after a single detail/episode update. Cold decoding exposes the first 120 titles before processing the rest. Reselecting the current catalogue section retains its composition, scroll state and focus requesters; focus is restored without rebuilding poster rows. Writes use batches of at most 64 products and DAO bulk operations; unchanged compact JSON skips repeated title parsing and FTS updates. Text/image regular expressions are compiled once.
 
 The application owns one `TvPlayer`. Explicit VOD playback closes the previous session before requesting the next one. Metadata browsing uses a separate request mutex and never requests a ticket. Progress is profile scoped and synchronized with Go3; the watchlist remains local.
+
+The basic catalogue response omits `genres`. Reading them only from product details produced genre rows containing previously opened films. The filtering endpoint supplies full genre membership in bulk; repeated `type[]` parameters exclude episodes. Only genre arrays are merged into existing catalogue records, preserving descriptions, original titles, availability, rights and detail flags. Schema 7 adds a genre refresh timestamp (zero on migration) and cached ordered popularity IDs to `catalog_sync`; the first browse repairs an otherwise fresh older cache. A failed genre page preserves cached titles and does not mark the refresh complete. Ranking failures preserve the previous Go3 order. Neither recent additions nor ratings are used as a popularity proxy.
+
+Bulk genres and weekly ranking were additionally checked on the signed-in TCL on 2026-11-13. The ranking request carries the same subscriber/profile context and recommendation-section position as the Go3 web client; the subscriber ID stays inside the gateway. Movie ranking IDs are cached per profile and filtered by the current package/genre/year selection without changing their server order.
 
 Resource limits: Coil memory 24 MB, disk 128 MB, two concurrent image response bodies; one catalogue request; compressed video target 24 MB with 15–30 second buffering limits. Catalogue preloading waits while an active video has less than five seconds buffered. The existing TCL `rtd6748` hardware synchronization setting remains in place.
 

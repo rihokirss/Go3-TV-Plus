@@ -128,6 +128,10 @@ class CatalogRepository(private val gateway: Go3Gateway, private val auth: AuthC
     fun titles(profile: String): Flow<List<CatalogTitle>> = withRights(profile,
         dao.titles(profile).map { rows -> rows.mapNotNull(::decode) })
 
+    fun popularMovieIds(profile: String): Flow<List<String>> = dao.sync(profile).map { sync ->
+        runCatching { Json.parseToJsonElement(sync?.popularMovieIds ?: "[]").jsonArray.mapNotNull { it.jsonPrimitive.contentOrNull } }.getOrDefault(emptyList())
+    }.distinctUntilChanged()
+
     @OptIn(ExperimentalCoroutinesApi::class)
     fun observeTitles(profile: String): Flow<List<CatalogTitle>> {
         var published = false
@@ -159,8 +163,15 @@ class CatalogRepository(private val gateway: Go3Gateway, private val auth: AuthC
             dao.clearRights(profile)
             // Persist only known catalogue IDs; the endpoint also contains TV recording rights.
             rights.ids.entries.filter { it.key in knownIds }.chunked(500).forEach { chunk -> dao.saveRights(chunk.map { RightEntity(profile, it.key, it.value, rights.checkedAt) }) }
-            dao.saveSync(CatalogSyncEntity(profile, rights.checkedAt, dao.syncSnapshot(profile)?.catalogCheckedAt ?: 0))
+            val previous = dao.syncSnapshot(profile) ?: CatalogSyncEntity(profile, 0)
+            dao.saveSync(previous.copy(rightsCheckedAt = rights.checkedAt))
         }
+    }
+    suspend fun needsRefresh(profile: String): Boolean {
+        val sync = dao.syncSnapshot(profile) ?: return true
+        val oldest = minOf(sync.catalogCheckedAt, sync.genresCheckedAt)
+        val now = System.currentTimeMillis()
+        return oldest <= 0 || now < oldest || now - oldest > 3600_000
     }
     suspend fun refresh(profile: String) {
         refreshRights(profile)
@@ -174,13 +185,21 @@ class CatalogRepository(private val gateway: Go3Gateway, private val auth: AuthC
             seen += page.items.mapNotNull { it.text("id") }
             offset += page.consumed
             if (offset >= page.total) {
+                refreshGenres(profile, seen)
                 // Only a completed snapshot may retire removed titles; interrupted pages preserve the cache.
                 val goneIds = dao.revisions(profile).first().filter { it.kind != CatalogKind.EPISODE.name && it.id !in seen }.map { it.id }
                 goneIds.chunked(120).forEach { ids ->
                     dao.saveTitles(dao.titlesByIds(profile, ids).map { row -> row.copy(json = JsonObject(Json.parseToJsonElement(row.json).jsonObject + ("active" to JsonPrimitive(false))).toString(), updatedAt = System.currentTimeMillis()) })
                 }
+                try { refreshPopularMovies(profile) }
+                catch (error: CancellationException) { throw error }
+                catch (error: Exception) {
+                    // Preserve the cached order; never expose credentials/URLs in diagnostics.
+                    if (ee.local.go3tvplus.BuildConfig.DEBUG) android.util.Log.i("CatalogCache", "Popularity unavailable: ${error.javaClass.simpleName}")
+                }
                 val sync = dao.syncSnapshot(profile) ?: CatalogSyncEntity(profile, 0)
-                dao.saveSync(sync.copy(catalogCheckedAt = System.currentTimeMillis()))
+                val checkedAt = System.currentTimeMillis()
+                dao.saveSync(sync.copy(catalogCheckedAt = checkedAt, genresCheckedAt = checkedAt))
                 return
             }
             if (page.consumed == 0) throw Go3Failure.Unavailable("Kataloogi värskendamine jäi pooleli")
@@ -188,6 +207,34 @@ class CatalogRepository(private val gateway: Go3Gateway, private val auth: AuthC
             delay(150)
         }
         throw Go3Failure.Unavailable("Kataloogi värskendamine jäi pooleli")
+    }
+    private suspend fun refreshGenres(profile: String, catalogIds: Set<String>) {
+        var offset = 0
+        repeat(100) {
+            while (!prefetchAllowed) delay(1000)
+            val page = request { gateway.catalogGenrePage(it, profile, offset, if (offset == 0) 120 else 400) }
+            // Merge only genres into known catalogue records. Search-index documents
+            // omit descriptions/original titles and must not replace those fields.
+            val updates = page.items.mapNotNull { raw ->
+                val id = raw.text("id")?.takeIf { it in catalogIds } ?: return@mapNotNull null
+                if (raw["genres"] !is JsonArray) return@mapNotNull null
+                buildJsonObject { put("id", id); put("genres", raw.getValue("genres")) }
+            }
+            save(profile, updates, detailed = false)
+            offset += page.consumed
+            if (offset >= page.total) return
+            if (page.consumed == 0) throw Go3Failure.Unavailable("Žanride laadimine jäi pooleli")
+            delay(150)
+        }
+        throw Go3Failure.Unavailable("Žanride laadimine jäi pooleli")
+    }
+    private suspend fun refreshPopularMovies(profile: String) {
+        while (!prefetchAllowed) delay(1000)
+        val movies = request { gateway.catalogPopularMovies(it, profile) }
+        save(profile, movies, detailed = false)
+        val ids = movies.mapNotNull { it.text("id") }.distinct()
+        val sync = dao.syncSnapshot(profile) ?: CatalogSyncEntity(profile, 0)
+        dao.saveSync(sync.copy(popularMovieIds = JsonArray(ids.map(::JsonPrimitive)).toString()))
     }
     private suspend fun save(profile: String, items: List<JsonObject>, detailed: Boolean, series: String? = null, season: String? = null) {
         // Bound each write transaction and use batch DAO operations: per-title suspend

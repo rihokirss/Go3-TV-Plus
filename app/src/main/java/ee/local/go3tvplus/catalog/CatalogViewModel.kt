@@ -12,6 +12,7 @@ data class CatalogUiState(
     val profile: String? = null, val visible: Boolean = false, val section: CatalogSection = CatalogSection.TV,
     val menu: Boolean = true, val entry: Int = 0, val pages: List<CatalogScreenState> = emptyList(),
     val titles: List<CatalogTitle> = emptyList(), val list: List<String> = emptyList(), val progress: Map<String, CatalogProgress> = emptyMap(),
+    val popularMovieIds: List<String> = emptyList(),
     val seasons: Map<String, List<CatalogSeason>> = emptyMap(), val completeSeasons: Set<String> = emptySet(), val selectedSeasons: Map<String, String> = emptyMap(),
     val query: String = "", val searchIds: Set<String>? = null, val searching: Boolean = false,
     val loading: Boolean = false, val detailLoading: Boolean = false, val error: String? = null,
@@ -38,6 +39,19 @@ data class CatalogUiState(
         if (knownSeasons.isEmpty() || knownSeasons.any { season -> season.id !in completeSeasons }) return true
         return episodes.any { progress[it.id]?.watched != true }
     }
+    fun popularMovies(items: List<CatalogTitle> = filtered()): List<CatalogTitle> {
+        val byId = items.filter { it.kind == CatalogKind.MOVIE }.associateBy { it.id }
+        return popularMovieIds.distinct().mapNotNull(byId::get)
+    }
+    fun browseItems(filter: CatalogFilter = page?.filter ?: CatalogFilter()): List<CatalogTitle> {
+        val base = filtered(filter)
+        return when (page?.group) {
+            "continue" -> base.filter { item -> progressFor(item)?.let { p -> p.positionMs > 0 && p.continueEligible && (if (item.kind == CatalogKind.SERIES) seriesHasMore(item) else !p.watched) } == true }
+            "list" -> base.filter { it.id in list }
+            "popular" -> popularMovies(base)
+            else -> base
+        }
+    }
     fun rows(): List<CatalogRow> {
         val items = filtered()
         val byId = items.associateBy { it.id }
@@ -47,6 +61,8 @@ data class CatalogUiState(
             if (continuing.isNotEmpty()) add(CatalogRow("continue", "Jätka vaatamist", continuing))
             val saved = list.mapNotNull(byId::get); if (saved.isNotEmpty()) add(CatalogRow("list", "Minu nimekiri", saved))
             if (items.isNotEmpty()) add(CatalogRow("recent", "Hiljuti lisatud", items.sortedByDescending { it.added }))
+            val popular = popularMovies(items)
+            if (popular.isNotEmpty()) add(CatalogRow("popular", "Populaarseimad filmid Go3-s", popular))
             items.flatMap { it.genres }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.forEach { (genre, _) ->
                 add(CatalogRow("genre:$genre", genre, items.filter { genre in it.genres }))
             }
@@ -102,6 +118,7 @@ class CatalogViewModel(private val repository: CatalogRepository, private val sc
         profileJob = scope.launch {
             launch { if (historySyncEnabled) repository.runHistorySync(profile) }
             launch { repository.historyStatus(profile).collect { value -> mutable.update { it.copy(history = value) } } }
+            launch { repository.popularMovieIds(profile).collect { ids -> mutable.update { it.copy(popularMovieIds = ids) } } }
             launch { repository.observeTitles(profile).collect { values ->
                 mutable.update { it.copy(titles = values) }
                 if (snapshot.query.isNotBlank()) query(snapshot.query)
@@ -114,13 +131,13 @@ class CatalogViewModel(private val repository: CatalogRepository, private val sc
     fun contentFocus() { mutable.update { it.copy(menu = false) } }
     fun select(section: CatalogSection) {
         if (section == CatalogSection.TV) { mutable.update { it.copy(visible = false, section = section, pages = emptyList()) }; onTv(); return }
-        if (section == CatalogSection.SETTINGS) { mutable.update { it.copy(visible = false) }; onSettings(); return }
+        if (section == CatalogSection.SETTINGS) { mutable.update { it.copy(visible = false, section = section) }; onSettings(); return }
         if (diagnostics) browseOpenedAtNanos = System.nanoTime()
         val kind = when(section) { CatalogSection.MOVIES -> CatalogKind.MOVIE; CatalogSection.SERIES -> CatalogKind.SERIES; else -> null }
         mutable.update { it.copy(visible = true, menu = false, section = section, entry = it.entry + 1, pages = listOf(CatalogScreenState(section.name, section.label, grid = section == CatalogSection.SEARCH || section == CatalogSection.LIST, filter = CatalogFilter(kind = kind))), error = null) }
         scope.launch {
-            val last = repository.dao.syncSnapshot(snapshot.profile ?: return@launch)?.catalogCheckedAt ?: 0
-            if (System.currentTimeMillis() - last > 3600_000) refresh()
+            val profile = snapshot.profile ?: return@launch
+            if (repository.needsRefresh(profile) && snapshot.profile == profile) refresh()
         }
     }
     fun refresh() {
@@ -180,7 +197,7 @@ class CatalogViewModel(private val repository: CatalogRepository, private val sc
     fun all(row: CatalogRow) {
         val old = snapshot.page ?: return
         mutable.update { it.copy(pages = it.pages + CatalogScreenState("${old.key}/${row.key}", row.title, grid = true,
-            filter = old.filter.copy(genre = row.key.removePrefix("genre:").takeIf { row.key.startsWith("genre:") }), group = row.key)) }
+            filter = old.filter.copy(genre = if (row.key.startsWith("genre:")) row.key.removePrefix("genre:") else old.filter.genre), group = row.key)) }
     }
     fun filter(value: CatalogFilter) { mutable.update { it.copy(pages = it.pages.dropLast(1) + (it.page?.copy(filter = value) ?: return@update it)) } }
     fun query(text: String) {

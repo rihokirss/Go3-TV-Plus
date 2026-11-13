@@ -85,6 +85,7 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
     private class ProfileSigningContext(val id: JsonElement, val name: String, val token: String)
     private val profileSigning = ConcurrentHashMap<String, ProfileSigningContext>()
     @Volatile private var tier: String = "TIER_2"
+    @Volatile private var subscriberId: String? = null
     @Volatile private var channelIds: List<String> = emptyList()
     /** Vana programmiotspunkt vastab 404, kui see on välja lülitatud; jätame selle meelde, et mitte iga värskendusega uuesti proovida. */
     @Volatile private var legacyEndpointAvailable = true
@@ -126,6 +127,7 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
 
     override suspend fun profiles(accessToken: String): List<Profile> {
         val subscriber = executeJson(request("subscribers/detail", token = accessToken)).jsonObject
+        subscriberId = subscriber.string("id")
         subscriber.string("tier")?.takeIf(String::isNotBlank)?.let { tier = it }
         return subscriber.array("profiles").mapNotNull { element ->
             val item = element as? JsonObject ?: return@mapNotNull null
@@ -334,8 +336,40 @@ class Go3HttpGateway(context: Context) : Go3Gateway {
             ?: throw Go3Failure.Unavailable("Kataloogi maht puudub"), raw.size)
     }
 
+    override suspend fun catalogGenrePage(accessToken: String, profileId: String, offset: Int, limit: Int): CatalogPage {
+        // The normal catalogue omits genres. The filtering index includes the complete
+        // genre arrays in bulk; type[] is required to exclude thousands of episodes.
+        val root = executeJson(request("products/vods/filtering", token = accessToken, profileId = profileId,
+            query = listOf("firstResult" to offset.toString(), "maxResults" to limit.toString(), "tier" to tier,
+                "type[]" to "VOD", "type[]" to "SERIAL"))).jsonObject
+        val raw = root.array("items")
+        return CatalogPage(raw.mapNotNull { it as? JsonObject }, root.obj("meta")?.int("totalCount")
+            ?: throw Go3Failure.Unavailable("Žanriloendi maht puudub"), raw.size)
+    }
+
     override suspend fun catalogDetail(accessToken: String, profileId: String, id: String): JsonObject =
         executeJson(request("products/vods/$id", token = accessToken, profileId = profileId)).jsonObject
+
+    override suspend fun catalogPopularMovies(accessToken: String, profileId: String): List<JsonObject> {
+        if (subscriberId == null) profiles(accessToken)
+        val sections = executeJson(request("products/sections/v2/movies", token = accessToken, profileId = profileId,
+            query = listOf("tier" to tier))).asArray()
+        val weekly = sections.mapNotNull { it as? JsonObject }.firstOrNull {
+            it.string("slug") == "weekly-top-30-movies-recommendation" && it["active"]?.jsonPrimitive?.booleanOrNull != false
+        } ?: return emptyList()
+        val id = weekly.string("id") ?: return emptyList()
+        val rank = sections.takeWhile { it != weekly }.count { (it as? JsonObject)?.string("contentType") == "RECOMMENDATION" }
+        val ranking = executeJson(request("int/sections/recommendations", token = accessToken, profileId = profileId,
+            query = buildList {
+                add("sectionId" to id); add("label" to "movies"); add("profileUid" to profileId); add("rank" to rank.toString())
+                subscriberId?.let { add("subscriberId" to it) }
+            })).jsonObject
+        // Preserve Go3's weekly popularity order; never derive it from release dates or scores.
+        return ranking.array("elements").mapNotNull { element ->
+            val raw = element as? JsonObject ?: return@mapNotNull null
+            (raw.obj("item") ?: raw).takeIf { it.string("type") == "VOD" }
+        }.distinctBy { it.string("id") }
+    }
 
     override suspend fun catalogSeasons(accessToken: String, profileId: String, seriesId: String): List<CatalogSeason> =
         executeJson(request("products/vods/serials/$seriesId/seasons", token = accessToken, profileId = profileId,

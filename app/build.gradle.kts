@@ -12,8 +12,8 @@ android {
         applicationId = "ee.local.go3tvplus"
         minSdk = 28
         targetSdk = 35
-        versionCode = 52
-        versionName = "0.5.0"
+        versionCode = 53
+        versionName = "0.5.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

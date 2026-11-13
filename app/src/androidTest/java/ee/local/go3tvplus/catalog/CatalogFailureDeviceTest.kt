@@ -31,6 +31,7 @@ class CatalogFailureDeviceTest {
             if (offline || offset > 0) throw Go3Failure.Unavailable("Test interrupted page")
             return CatalogPage(listOf(raw(profileId, "one"), raw(profileId, "two")), if (partial) 3 else 2, 2)
         }
+        override suspend fun catalogGenrePage(accessToken: String, profileId: String, offset: Int, limit: Int) = CatalogPage(emptyList(), 0, 0)
         override suspend fun catalogDetail(accessToken: String, profileId: String, id: String): JsonObject {
             detailsStarted.complete(Unit)
             detailsGate?.await()
