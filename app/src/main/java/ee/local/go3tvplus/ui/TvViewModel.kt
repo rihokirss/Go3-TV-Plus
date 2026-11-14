@@ -77,7 +77,9 @@ class TvViewModel(
 ) : ViewModel(), TvPlayer.Listener {
     val mediaPlayer get() = tvPlayer.player
     val catalog = CatalogViewModel(catalogRepository, viewModelScope, context)
-    private var vodItem: CatalogTitle? = null
+    private var vodItem: CatalogTitle?
+        get() = snapshot.vodItem
+        set(value) { mutableState.update { it.copy(vodItem = value) } }
     private var vodProfile: String? = null
     private var vodTransition = false
     private var vodResumeMs = 0L
@@ -468,7 +470,9 @@ class TvViewModel(
             return false // Compose owns D-pad and BACK (including the search IME).
         }
         if (vodItem != null && event.keyCode == KeyEvent.KEYCODE_BACK) {
-            if (event.isFirstPress) returnFromVod()
+            if (event.isFirstPress) {
+                if (snapshot.overlay == Overlay.SEEK) closeOverlay() else returnFromVod()
+            }
             return true
         }
         if (vodItem != null && (digitFor(event.keyCode) != null || event.keyCode == KeyEvent.KEYCODE_CHANNEL_UP || event.keyCode == KeyEvent.KEYCODE_CHANNEL_DOWN)) return true

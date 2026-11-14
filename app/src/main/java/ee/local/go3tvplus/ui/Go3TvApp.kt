@@ -68,6 +68,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
+import ee.local.go3tvplus.catalog.CatalogKind
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -462,16 +464,17 @@ private fun PlaybackClock(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun SeekOverlay(state: TvUiState) {
-    // While catchup plays, describe the catchup programme — not whatever is
-    // currently airing live on the channel.
-    val watching = state.catchupProgram
-    val channel = state.channels.firstOrNull { it.id == (watching?.channelId ?: state.currentChannelId) }
+internal fun SeekOverlay(state: TvUiState) {
+    // Catalogue playback retains the background channel for TV restoration.
+    // Its EPG and any earlier catch-up selection do not describe this video.
+    val vod = state.vodItem
+    val watching = state.catchupProgram.takeIf { vod == null }
+    val channel = state.channels.firstOrNull { vod == null && it.id == (watching?.channelId ?: state.currentChannelId) }
     val playbackInstant = state.seek.liveOffsetMs
         ?.takeIf { state.seek.isLive }
         ?.let { Instant.now().minusMillis(it) }
         ?: Instant.now()
-    val program = watching ?: state.programsFor(state.currentChannelId)
+    val program = if (vod != null) null else watching ?: state.programsFor(state.currentChannelId)
         .firstOrNull { ProgramWindow.isCurrent(it, playbackInstant) }
     val canStartOver = watching == null && state.seek.isLive && program != null && (
         StartOverResolver.liveRewindMs(state.seek.positionMs, program.startsAt, playbackInstant) != null ||
@@ -482,7 +485,7 @@ private fun SeekOverlay(state: TvUiState) {
     } else {
         playbackInstant.minusMillis(state.seek.positionMs.coerceAtLeast(0L))
     }
-    val programBoundaries = ProgramWindow.boundaryFractions(
+    val programBoundaries = if (vod != null) emptyList() else ProgramWindow.boundaryFractions(
         state.programsFor(channel?.id),
         timelineStart,
         state.seek.durationMs,
@@ -491,7 +494,7 @@ private fun SeekOverlay(state: TvUiState) {
         (state.seek.positionMs.toFloat() / state.seek.durationMs.toFloat()).coerceIn(0f, 1f)
     } else 0f
     val liveLabel = when {
-        !state.seek.isLive -> formatPlaybackDuration(state.seek.durationMs)
+        vod != null || !state.seek.isLive -> formatPlaybackDuration(state.seek.durationMs)
         (state.seek.liveOffsetMs ?: Long.MAX_VALUE) <= 5_000L -> "OTSE"
         else -> "−${formatPlaybackDuration(state.seek.liveOffsetMs ?: 0L)} OTSEST"
     }
@@ -507,7 +510,9 @@ private fun SeekOverlay(state: TvUiState) {
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "${channel?.number ?: ""}  ${channel?.name.orEmpty()}" +
+                    if (vod != null) {
+                        listOfNotNull(if (vod.kind == CatalogKind.MOVIE) "FILM" else "SERIAAL", vod.episode?.let { "$it. osa" }).joinToString("  •  ")
+                    } else "${channel?.number ?: ""}  ${channel?.name.orEmpty()}" +
                         if (watching != null) "  •  ${formatDate(watching.startsAt)} ${formatTime(watching.startsAt)}" else "",
                     color = Go3Colors.Cyan,
                     fontSize = 16.sp,
@@ -525,13 +530,18 @@ private fun SeekOverlay(state: TvUiState) {
                 }
             }
             Text(
-                program?.title ?: "Ajanihe",
+                vod?.title ?: program?.title ?: "Ajanihe",
                 color = Color.White,
                 fontSize = 22.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (vod != null) {
+                val metadata = listOfNotNull(vod.year?.toString(), vod.age?.let { "$it+" }, vod.durationSeconds?.takeIf { it > 0 }?.let { "${it / 60} min" }).joinToString("  •  ")
+                if (metadata.isNotEmpty()) Text(metadata, color = Go3Colors.Cyan, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                if (!vod.description.isNullOrBlank()) Text(vod.description, color = Go3Colors.TextSecondary, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
             program?.let {
                 Text(
                     "${formatTime(it.startsAt)}–${formatTime(it.endsAt)}  •  ${formatProgramDuration(ProgramWindow.durationMinutes(it))}",
@@ -564,6 +574,7 @@ private fun SeekOverlay(state: TvUiState) {
                 programBoundaries.forEach { fraction ->
                     Box(
                         Modifier
+                            .testTag("seek-program-boundary")
                             .offset(
                                 x = (maxWidth * fraction - 1.dp)
                                     .coerceIn(0.dp, (maxWidth - 2.dp).coerceAtLeast(0.dp)),

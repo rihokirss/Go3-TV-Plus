@@ -191,6 +191,8 @@ data class TvUiState(
     val numberInput: String = "",
     /** Set while a catchup stream plays, so overlays show the right programme. */
     val catchupProgram: Program? = null,
+    /** Active catalogue video; currentChannelId remains the TV channel to restore. */
+    val vodItem: ee.local.go3tvplus.catalog.CatalogTitle? = null,
     val seek: SeekState = SeekState(),
     val loading: Boolean = false,
     val videoVisible: Boolean = false,
